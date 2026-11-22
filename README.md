@@ -1,8 +1,5 @@
 # AndroiOS
 
-## Important Context
-Almost all of this app's code was made by Claude. Claude wrote the code, ironed everything out, but the design decisions, ideas, architecture choices, and direction were all mine. I guided the implementation, decided how things should work, and shaped the end result.
-
 Run Android (LineageOS 23.2 / Android 16) on an iPhone or iPad. AndroiOS is a sideloaded
 SwiftUI app that runs an AArch64 VM **in-process** with QEMU's JIT (TCG). Android's
 OpenGL ES rendering runs on the **Apple GPU**:
@@ -58,6 +55,10 @@ On the device:
 | `Engine-C/tests/` | macOS harness (`run-engine-harness.sh`) plus GL checks |
 | `Guest/fetch-lineage.sh` | Fetches and verifies the LineageOS VM |
 | `Guest/build-guest.sh` | Alternative guest: Ubuntu + Waydroid (see docs/BUILDING.md) |
+
+## Important Context
+Almost all of this app's code was made by Claude. Claude wrote the code, ironed everything out, but the design decisions, ideas, architecture choices, and direction were all mine. I guided the implementation, decided how things should work, and shaped the end result.
+
 
 ## License
 QEMU is GPL-2.0; the patches and code linked into `QEMU.framework` are GPL-2.0-or-later.
