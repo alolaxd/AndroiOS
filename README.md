@@ -1,5 +1,8 @@
 # AndroiOS
 
+## Important Context
+Almost all of this app's code was made by Claude. Claude wrote the code, ironed everything out, but the design decisions, ideas, architecture choices, and direction were all mine. I guided the implementation, decided how things should work, and shaped the end result.
+
 Run Android (LineageOS 23.2 / Android 16) on an iPhone or iPad. AndroiOS is a sideloaded
 SwiftUI app that runs an AArch64 VM **in-process** with QEMU's JIT (TCG). Android's
 OpenGL ES rendering runs on the **Apple GPU**:
