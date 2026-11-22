@@ -34,11 +34,14 @@ git clone --recursive <this repo> && cd AndroiOS
 Scripts/build-all.sh          # WebKit ANGLE + engine + app → build/AndroiOS.ipa
 Guest/fetch-lineage.sh        # LineageOS 23.2 VM (verified attestation) → Guest/build/lineage/
 ```
+Easiest: `Scripts/build-ipa.sh --with-guest` produces `build/AndroiOS-LineageOS.ipa` (~1 GB)
+with LineageOS 23.2 inside. On first launch, the setup wizard's **Use built-in LineageOS 23.2**
+copies the disks into the app's storage and creates the VM.
+
 On the device:
-1. Sideload `build/AndroiOS.ipa`. Apply the memory entitlements with GetMoreRAM, TrollStore,
-   or a paid developer profile.
-2. Copy `efi_vars.fd`, `vda.qcow2` and `vdb.qcow2` (from `LineageOS_on_arm64.utm/Data`) into
-   AndroiOS's Documents. The setup wizard detects the UEFI layout.
+1. Sideload `AndroiOS-LineageOS.ipa`, or `AndroiOS.ipa` (10 MB) and copy `efi_vars.fd`,
+   `vda.qcow2` and `vdb.qcow2` into AndroiOS's Documents yourself.
+2. Apply the memory entitlements with GetMoreRAM, TrollStore, or a paid developer profile.
 3. Enable JIT with StikDebug, then boot.
 
 ## Layout
