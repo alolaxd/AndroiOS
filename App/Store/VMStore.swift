@@ -61,6 +61,46 @@ final class VMStore: ObservableObject {
         objectWillChange.send()
     }
 
+    // MARK: Built-in guest (shipped inside the app by Scripts/build-ipa.sh --with-guest)
+
+    /// Read-only copy of the LineageOS VM inside the app bundle, if this build has one.
+    static var bundledGuest: URL? {
+        let dir = Bundle.main.bundleURL.appendingPathComponent("Guest/LineageOS")
+        return FileManager.default.fileExists(atPath: dir.appendingPathComponent("vda.qcow2").path) ? dir : nil
+    }
+
+    /// Creates a VM from the bundled LineageOS files. The bundle is read-only, so the
+    /// disks are copied into Documents (APFS clones them, so this is near-instant).
+    func installBundledGuest() async throws -> VMConfiguration {
+        guard let src = Self.bundledGuest else { throw CocoaError(.fileNoSuchFile) }
+        var vm = VMConfiguration()
+        vm.name = "LineageOS"
+        vm.osDescription = "LineageOS 23.2 (Android 16), virtio_arm64only"
+        vm.boot = .uefi
+        vm.efiVars = "efi_vars.fd"
+        vm.disks = ["vda.qcow2", "vdb.qcow2"]
+        vm.soundDevice = "ac97"
+        vm.touchDevice = "tablet"
+        vm.gpu = .virgl
+        vm.ramMB = DeviceCapabilities.current.defaultGuestRAMMB
+        vm.cpus = DeviceCapabilities.current.defaultCPUs
+        let dir = bundle(for: vm)
+        try await Task.detached(priority: .userInitiated) {
+            let fm = FileManager.default
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            for name in ["efi_vars.fd", "vda.qcow2", "vdb.qcow2"] {
+                let dst = dir.appendingPathComponent(name)
+                try? fm.removeItem(at: dst)
+                try fm.copyItem(at: src.appendingPathComponent(name), to: dst)
+                // Bundle files are read-only; the VM must be able to write its disks.
+                try fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: dst.path)
+            }
+        }.value
+        StorageHelper.excludeFromBackup(dir)
+        save(vm)
+        return vm
+    }
+
     func clone(_ vm: VMConfiguration) throws {
         var copy = vm
         copy.id = UUID()

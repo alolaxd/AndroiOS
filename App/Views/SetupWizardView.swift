@@ -17,6 +17,7 @@ struct SetupWizardView: View {
     @State private var baseURL = ""
     @State private var downloadQueue: [String] = []
     @State private var error: String?
+    @State private var installing = false
     private let caps = DeviceCapabilities.current
     private static let guestFiles = ["efi_vars.fd", "vda.qcow2", "vdb.qcow2"]
 
@@ -66,6 +67,27 @@ struct SetupWizardView: View {
     }
 
     @ViewBuilder private var guest: some View {
+        if VMStore.bundledGuest != nil {
+            Section {
+                Button {
+                    installing = true
+                    Task {
+                        do { _ = try await store.installBundledGuest(); dismiss() }
+                        catch { self.error = error.localizedDescription }
+                        installing = false
+                    }
+                } label: {
+                    HStack {
+                        Label("Use built-in LineageOS 23.2 (Android 16)", systemImage: "shippingbox.fill")
+                        Spacer()
+                        if installing { ProgressView() }
+                    }
+                }
+                .disabled(installing)
+            } header: { Text("Included with this app") } footer: {
+                Text("Copies the Android disks into the app's storage (about 2.2 GB on disk) and creates the VM.")
+            }
+        }
         Section {
             Button("Import from Files…", systemImage: "folder") { importing = true }
             ForEach(files, id: \.self) { Text($0.lastPathComponent).font(.caption.monospaced()) }
