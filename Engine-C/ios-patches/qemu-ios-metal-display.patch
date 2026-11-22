@@ -1,0 +1,543 @@
+diff --git a/include/ui/egl-helpers.h b/include/ui/egl-helpers.h
+index 4b8c0d2..4b5f725 100644
+--- a/include/ui/egl-helpers.h
++++ b/include/ui/egl-helpers.h
+@@ -70,6 +70,9 @@ int qemu_egl_init_dpy_win32(EGLNativeDisplayType dpy, DisplayGLMode mode);
+ #endif
+ 
+ EGLContext qemu_egl_init_ctx(void);
++#ifdef __APPLE__
++int qemu_egl_init_dpy_apple(EGLNativeDisplayType dpy, DisplayGLMode mode);
++#endif
+ bool qemu_egl_has_dmabuf(void);
+ 
+ bool egl_init(const char *rendernode, DisplayGLMode mode, Error **errp);
+diff --git a/qapi/ui.json b/qapi/ui.json
+index 460a26b..346a999 100644
+--- a/qapi/ui.json
++++ b/qapi/ui.json
+@@ -1505,6 +1505,8 @@
+ #
+ # @dbus: Start a D-Bus service for the display.  (Since 7.0)
+ #
++# @ios: Render into an IOSurface for an embedding iOS app (AndroiOS).
++#
+ # Since: 2.12
+ ##
+ { 'enum'    : 'DisplayType',
+@@ -1517,7 +1519,8 @@
+     { 'name': 'curses', 'if': 'CONFIG_CURSES' },
+     { 'name': 'cocoa', 'if': 'CONFIG_COCOA' },
+     { 'name': 'spice-app', 'if': 'CONFIG_SPICE' },
+-    { 'name': 'dbus', 'if': 'CONFIG_DBUS_DISPLAY' }
++    { 'name': 'dbus', 'if': 'CONFIG_DBUS_DISPLAY' },
++    { 'name': 'ios', 'if': 'CONFIG_IOS_DISPLAY' }
+   ]
+ }
+ 
+diff --git a/ui/egl-helpers.c b/ui/egl-helpers.c
+index 81a57fa..89d9a86 100644
+--- a/ui/egl-helpers.c
++++ b/ui/egl-helpers.c
+@@ -429,7 +429,7 @@ EGLSurface qemu_egl_init_surface_x11(EGLContext ectx, EGLNativeWindowType win)
+ 
+ /* ---------------------------------------------------------------------- */
+ 
+-#if defined(CONFIG_X11) || defined(CONFIG_GBM) || defined(WIN32)
++#if defined(CONFIG_X11) || defined(CONFIG_GBM) || defined(WIN32) || defined(__APPLE__)
+ 
+ /*
+  * Taken from glamor_egl.h from the Xorg xserver, which is MIT licensed
+@@ -467,7 +467,7 @@ static EGLDisplay qemu_egl_get_display(EGLNativeDisplayType native,
+     /* In practise any EGL 1.5 implementation would support the EXT extension */
+     if (epoxy_has_egl_extension(NULL, "EGL_EXT_platform_base")) {
+         if (platform != 0) {
+-            dpy = eglGetPlatformDisplayEXT(platform, native, NULL);
++            dpy = eglGetPlatformDisplayEXT(platform, (void *)(intptr_t)native, NULL);
+         }
+     }
+ 
+@@ -492,7 +492,11 @@ static int qemu_egl_init_dpy(EGLNativeDisplayType dpy,
+         EGL_NONE,
+     };
+     static const EGLint conf_att_gles[] = {
++#ifdef __APPLE__
++        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
++#else
+         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
++#endif
+         EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+         EGL_RED_SIZE,   5,
+         EGL_GREEN_SIZE, 5,
+@@ -598,6 +602,14 @@ int qemu_egl_init_dpy_win32(EGLNativeDisplayType dpy, DisplayGLMode mode)
+ }
+ #endif
+ 
++#ifdef __APPLE__
++/* ANGLE's Metal backend; the config also needs pbuffers for IOSurfaces. */
++int qemu_egl_init_dpy_apple(EGLNativeDisplayType dpy, DisplayGLMode mode)
++{
++    return qemu_egl_init_dpy(dpy, 0, DISPLAY_GL_MODE_ES);
++}
++#endif
++
+ bool qemu_egl_has_dmabuf(void)
+ {
+     if (qemu_egl_display == EGL_NO_DISPLAY) {
+@@ -615,7 +627,11 @@ EGLContext qemu_egl_init_ctx(void)
+         EGL_NONE
+     };
+     static const EGLint ctx_att_gles[] = {
++#ifdef __APPLE__
++        EGL_CONTEXT_CLIENT_VERSION, 3,   /* virgl on ANGLE wants an ES3 share group */
++#else
+         EGL_CONTEXT_CLIENT_VERSION, 2,
++#endif
+         EGL_NONE
+     };
+     bool gles = (qemu_egl_mode == DISPLAY_GL_MODE_ES);
+@@ -657,6 +673,16 @@ bool egl_init(const char *rendernode, DisplayGLMode mode, Error **errp)
+         error_setg(errp, "egl: egl_init_ctx failed");
+         return false;
+     }
++#elif defined(__APPLE__)
++    if (qemu_egl_init_dpy_apple(EGL_DEFAULT_DISPLAY, mode) < 0) {
++        error_setg(errp, "egl: ANGLE init failed (is libEGL.dylib bundled?)");
++        return false;
++    }
++    qemu_egl_rn_ctx = qemu_egl_init_ctx();
++    if (!qemu_egl_rn_ctx) {
++        error_setg(errp, "egl: egl_init_ctx failed");
++        return false;
++    }
+ #elif defined(CONFIG_GBM)
+     if (egl_rendernode_init(rendernode, mode) < 0) {
+         error_setg(errp, "egl: render node init failed");
+diff --git a/ui/ios.c b/ui/ios.c
+new file mode 100644
+index 0000000..a2ba6b3
+--- /dev/null
++++ b/ui/ios.c
+@@ -0,0 +1,406 @@
++/*
++ * "ios" display backend (AndroiOS).
++ *
++ * Presents the guest's primary console in an IOSurface that the host app
++ * samples directly from Metal (zero-copy on the GPU path):
++ *
++ *   virtio-gpu-gl (virgl) → GL texture in ANGLE (Metal backend)
++ *       → glBlitFramebuffer into an IOSurface-backed pbuffer
++ *       → host: MTLTexture(iosurface:) → CAMetalLayer
++ *
++ *   2D devices (virtio-gpu, ramfb) → pixman surface → memcpy into IOSurface
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/error-report.h"
++#include "qemu/main-loop.h"
++#include "qapi/error.h"
++#include "ui/console.h"
++#include "ui/input.h"
++#include "qemu-ios-api.h"
++
++#include <IOSurface/IOSurfaceRef.h>
++#include <CoreFoundation/CoreFoundation.h>
++
++#ifdef CONFIG_OPENGL
++#include "ui/egl-helpers.h"
++#include "ui/egl-context.h"
++#ifndef EGL_IOSURFACE_ANGLE
++#define EGL_IOSURFACE_ANGLE 0x3454
++#define EGL_IOSURFACE_PLANE_ANGLE 0x345A
++#define EGL_TEXTURE_RECTANGLE_ANGLE 0x345B
++#define EGL_TEXTURE_TYPE_ANGLE 0x345C
++#define EGL_TEXTURE_INTERNAL_FORMAT_ANGLE 0x345D
++#endif
++#ifndef EGL_BIND_TO_TEXTURE_TARGET_ANGLE
++#define EGL_BIND_TO_TEXTURE_TARGET_ANGLE 0x348D
++#endif
++#ifndef GL_TEXTURE_RECTANGLE_ANGLE
++#define GL_TEXTURE_RECTANGLE_ANGLE 0x84F5
++#endif
++#endif
++
++typedef struct IOSDisplay {
++    DisplayChangeListener dcl;
++    DisplaySurface *ds;
++    IOSurfaceRef surface;
++    int width, height;
++    bool gl_scanout;
++#ifdef CONFIG_OPENGL
++    egl_fb guest_fb;
++    egl_fb surface_fb;
++    EGLSurface pbuffer;
++    GLuint surface_tex;
++    bool y_0_top;
++#endif
++} IOSDisplay;
++
++static IOSDisplay *ios_dpy;
++static qemu_ios_frame_callback frame_cb;
++static void *frame_ctx;
++static uint64_t frame_seq;
++static int ios_gl_enabled;
++
++void qemu_ios_display_set_callback(qemu_ios_frame_callback cb, void *ctx)
++{
++    frame_ctx = ctx;
++    __atomic_store_n(&frame_cb, cb, __ATOMIC_RELEASE);
++}
++
++static void ios_emit_frame(IOSDisplay *d)
++{
++    qemu_ios_frame_callback cb = __atomic_load_n(&frame_cb, __ATOMIC_ACQUIRE);
++
++    frame_seq++;
++    if (cb && d->surface) {
++        cb((void *)d->surface, d->width, d->height, frame_seq, frame_ctx);
++    }
++}
++
++static IOSurfaceRef ios_create_surface(int w, int h)
++{
++    int bpr = (int)IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, w * 4);
++    int32_t fmt = 'BGRA';
++    int32_t bpe = 4;
++    CFMutableDictionaryRef props = CFDictionaryCreateMutable(
++        NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
++    CFNumberRef n;
++
++#define SET_INT(key, val) do { \
++        int32_t v_ = (val); \
++        n = CFNumberCreate(NULL, kCFNumberSInt32Type, &v_); \
++        CFDictionarySetValue(props, key, n); CFRelease(n); \
++    } while (0)
++    SET_INT(kIOSurfaceWidth, w);
++    SET_INT(kIOSurfaceHeight, h);
++    SET_INT(kIOSurfaceBytesPerElement, bpe);
++    SET_INT(kIOSurfaceBytesPerRow, bpr);
++    SET_INT(kIOSurfacePixelFormat, fmt);
++#undef SET_INT
++
++    IOSurfaceRef s = IOSurfaceCreate(props);
++    CFRelease(props);
++    return s;
++}
++
++/* Replace the IOSurface if the guest resolution changed. */
++static void ios_ensure_surface(IOSDisplay *d, int w, int h)
++{
++    if (d->surface && d->width == w && d->height == h) {
++        return;
++    }
++#ifdef CONFIG_OPENGL
++    if (d->pbuffer != EGL_NO_SURFACE && d->pbuffer) {
++        eglReleaseTexImage(qemu_egl_display, d->pbuffer, EGL_BACK_BUFFER);
++        eglDestroySurface(qemu_egl_display, d->pbuffer);
++        d->pbuffer = EGL_NO_SURFACE;
++    }
++    egl_fb_destroy(&d->surface_fb);
++    if (d->surface_tex) {
++        glDeleteTextures(1, &d->surface_tex);
++        d->surface_tex = 0;
++    }
++#endif
++    if (d->surface) {
++        CFRelease(d->surface);
++    }
++    d->surface = ios_create_surface(w, h);
++    d->width = w;
++    d->height = h;
++    if (!d->surface) {
++        error_report("ios display: IOSurfaceCreate(%dx%d) failed", w, h);
++    }
++}
++
++/* ----------------------------------------------------------- 2D path */
++
++static void ios_refresh(DisplayChangeListener *dcl)
++{
++    graphic_hw_update(dcl->con);
++}
++
++static void ios_gfx_switch(DisplayChangeListener *dcl, DisplaySurface *s)
++{
++    IOSDisplay *d = container_of(dcl, IOSDisplay, dcl);
++
++    d->ds = s;
++    if (s && !d->gl_scanout) {
++        ios_ensure_surface(d, surface_width(s), surface_height(s));
++        dpy_gfx_update_full(dcl->con);
++    }
++}
++
++static void ios_gfx_update(DisplayChangeListener *dcl, int x, int y, int w, int h)
++{
++    IOSDisplay *d = container_of(dcl, IOSDisplay, dcl);
++
++    if (d->gl_scanout || !d->ds) {
++        return;
++    }
++    ios_ensure_surface(d, surface_width(d->ds), surface_height(d->ds));
++    if (!d->surface || surface_format(d->ds) != PIXMAN_x8r8g8b8) {
++        return;
++    }
++    x = MAX(x, 0);
++    y = MAX(y, 0);
++    w = MIN(w, d->width - x);
++    h = MIN(h, d->height - y);
++    if (w <= 0 || h <= 0) {
++        return;
++    }
++
++    IOSurfaceLock(d->surface, 0, NULL);
++    uint8_t *dst = IOSurfaceGetBaseAddress(d->surface);
++    size_t dst_stride = IOSurfaceGetBytesPerRow(d->surface);
++    uint8_t *src = surface_data(d->ds);
++    int src_stride = surface_stride(d->ds);
++    for (int row = y; row < y + h; row++) {
++        memcpy(dst + row * dst_stride + x * 4, src + row * src_stride + x * 4, w * 4);
++    }
++    IOSurfaceUnlock(d->surface, 0, NULL);
++    ios_emit_frame(d);
++}
++
++/* ----------------------------------------------------------- GL path */
++#ifdef CONFIG_OPENGL
++
++static QEMUGLContext ios_gl_create_context(DisplayGLCtx *dgc, QEMUGLParams *params)
++{
++    eglMakeCurrent(qemu_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, qemu_egl_rn_ctx);
++    return qemu_egl_create_context(dgc, params);
++}
++
++static bool ios_bind_surface_texture(IOSDisplay *d)
++{
++    if (d->surface_fb.framebuffer) {
++        return true;
++    }
++    /* ANGLE requires the config's bind target: TEXTURE_2D or TEXTURE_RECTANGLE. */
++    EGLint target = EGL_TEXTURE_2D;
++    eglGetConfigAttrib(qemu_egl_display, qemu_egl_config, EGL_BIND_TO_TEXTURE_TARGET_ANGLE, &target);
++    GLenum gltarget = target == EGL_TEXTURE_RECTANGLE_ANGLE ? GL_TEXTURE_RECTANGLE_ANGLE : GL_TEXTURE_2D;
++    const EGLint attrs[] = {
++        EGL_WIDTH, d->width,
++        EGL_HEIGHT, d->height,
++        EGL_IOSURFACE_PLANE_ANGLE, 0,
++        EGL_TEXTURE_TARGET, target,
++        EGL_TEXTURE_INTERNAL_FORMAT_ANGLE, GL_BGRA_EXT,
++        EGL_TEXTURE_FORMAT, EGL_TEXTURE_RGBA,
++        EGL_TEXTURE_TYPE_ANGLE, GL_UNSIGNED_BYTE,
++        EGL_NONE,
++    };
++    d->pbuffer = eglCreatePbufferFromClientBuffer(qemu_egl_display, EGL_IOSURFACE_ANGLE,
++                                                  (EGLClientBuffer)d->surface,
++                                                  qemu_egl_config, attrs);
++    if (d->pbuffer == EGL_NO_SURFACE) {
++        error_report("ios display: IOSurface pbuffer failed: %s",
++                     qemu_egl_get_error_string());
++        return false;
++    }
++    glGenTextures(1, &d->surface_tex);
++    glBindTexture(gltarget, d->surface_tex);
++    if (!eglBindTexImage(qemu_egl_display, d->pbuffer, EGL_BACK_BUFFER)) {
++        error_report("ios display: eglBindTexImage failed: %s",
++                     qemu_egl_get_error_string());
++        return false;
++    }
++    d->surface_fb.width = d->width;
++    d->surface_fb.height = d->height;
++    d->surface_fb.texture = d->surface_tex;
++    d->surface_fb.delete_texture = false;
++    glGenFramebuffers(1, &d->surface_fb.framebuffer);
++    glBindFramebuffer(GL_FRAMEBUFFER, d->surface_fb.framebuffer);
++    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, gltarget, d->surface_tex, 0);
++    return true;
++}
++
++static void ios_scanout_disable(DisplayChangeListener *dcl)
++{
++    IOSDisplay *d = container_of(dcl, IOSDisplay, dcl);
++
++    d->gl_scanout = false;
++    egl_fb_destroy(&d->guest_fb);
++    if (d->ds) {
++        ios_gfx_switch(dcl, d->ds);
++    }
++}
++
++static void ios_scanout_texture(DisplayChangeListener *dcl, uint32_t backing_id,
++                                bool backing_y_0_top, uint32_t backing_width,
++                                uint32_t backing_height, uint32_t x, uint32_t y,
++                                uint32_t w, uint32_t h, void *d3d_tex2d)
++{
++    IOSDisplay *d = container_of(dcl, IOSDisplay, dcl);
++
++    eglMakeCurrent(qemu_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, qemu_egl_rn_ctx);
++    d->gl_scanout = true;
++    d->y_0_top = backing_y_0_top;
++    egl_fb_setup_for_tex(&d->guest_fb, backing_width, backing_height, backing_id, false);
++    ios_ensure_surface(d, backing_width, backing_height);
++}
++
++static void ios_scanout_flush(DisplayChangeListener *dcl,
++                              uint32_t x, uint32_t y, uint32_t w, uint32_t h)
++{
++    IOSDisplay *d = container_of(dcl, IOSDisplay, dcl);
++
++    if (!d->gl_scanout || !d->guest_fb.texture || !d->surface) {
++        return;
++    }
++    eglMakeCurrent(qemu_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, qemu_egl_rn_ctx);
++    if (!ios_bind_surface_texture(d)) {
++        return;
++    }
++    /* IOSurface row 0 is GL's y=0, while Metal treats row 0 as the top. */
++    egl_fb_blit(&d->surface_fb, &d->guest_fb, d->y_0_top);
++    /* Make the Metal command buffer complete before the host samples. */
++    glFinish();
++    ios_emit_frame(d);
++}
++
++static bool ios_is_compatible_dcl(DisplayGLCtx *dgc, DisplayChangeListener *dcl)
++{
++    return !dcl->ops->dpy_gl_update || dcl == &ios_dpy->dcl;
++}
++
++static const DisplayGLCtxOps ios_gl_ctx_ops = {
++    .dpy_gl_ctx_is_compatible_dcl = ios_is_compatible_dcl,
++    .dpy_gl_ctx_create            = ios_gl_create_context,
++    .dpy_gl_ctx_destroy           = qemu_egl_destroy_context,
++    .dpy_gl_ctx_make_current      = qemu_egl_make_context_current,
++};
++#endif /* CONFIG_OPENGL */
++
++static const DisplayChangeListenerOps ios_ops = {
++    .dpy_name                = "ios",
++    .dpy_refresh             = ios_refresh,
++    .dpy_gfx_update          = ios_gfx_update,
++    .dpy_gfx_switch          = ios_gfx_switch,
++};
++
++#ifdef CONFIG_OPENGL
++static const DisplayChangeListenerOps ios_gl_ops = {
++    .dpy_name                = "ios-gl",
++    .dpy_refresh             = ios_refresh,
++    .dpy_gfx_update          = ios_gfx_update,
++    .dpy_gfx_switch          = ios_gfx_switch,
++    .dpy_gl_scanout_disable  = ios_scanout_disable,
++    .dpy_gl_scanout_texture  = ios_scanout_texture,
++    .dpy_gl_update           = ios_scanout_flush,
++};
++#endif
++
++static void ios_display_early_init(DisplayOptions *opts)
++{
++#ifdef CONFIG_OPENGL
++    if (opts->has_gl && opts->gl != DISPLAY_GL_MODE_OFF) {
++        /* ANGLE implements GLES only. */
++        egl_init(NULL, DISPLAY_GL_MODE_ES, &error_fatal);
++        ios_gl_enabled = 1;
++    }
++#else
++    if (opts->has_gl && opts->gl != DISPLAY_GL_MODE_OFF) {
++        error_report("ios display: this build has no OpenGL support");
++        exit(1);
++    }
++#endif
++}
++
++static void ios_display_init(DisplayState *ds, DisplayOptions *opts)
++{
++    QemuConsole *con = qemu_console_lookup_by_index(0);
++
++    if (!con || !qemu_console_is_graphic(con)) {
++        return;     /* headless guest: serial console only */
++    }
++    ios_dpy = g_new0(IOSDisplay, 1);
++    ios_dpy->dcl.con = con;
++    ios_dpy->dcl.ops = &ios_ops;
++    ios_dpy->dcl.update_interval = 16;   /* ~60 Hz refresh for 2D devices */
++#ifdef CONFIG_OPENGL
++    if (ios_gl_enabled) {
++        DisplayGLCtx *ctx = g_new0(DisplayGLCtx, 1);
++
++        ios_dpy->dcl.ops = &ios_gl_ops;
++        ctx->ops = &ios_gl_ctx_ops;
++        qemu_console_set_display_gl_ctx(con, ctx);
++    }
++#endif
++    register_displaychangelistener(&ios_dpy->dcl);
++}
++
++/* ----------------------------------------------------------- input */
++
++static QemuConsole *ios_input_con(void)
++{
++    return ios_dpy ? ios_dpy->dcl.con : NULL;
++}
++
++void qemu_ios_input_touch(int slot, int tracking_id, int x, int y, int w, int h, int action)
++{
++    /* Called with the BQL held (see system/ios-main.c). */
++    QemuConsole *con = ios_input_con();
++    InputMultiTouchType type = action == QEMU_IOS_TOUCH_DOWN ? INPUT_MULTI_TOUCH_TYPE_BEGIN :
++                               action == QEMU_IOS_TOUCH_UP   ? INPUT_MULTI_TOUCH_TYPE_END :
++                               action == QEMU_IOS_TOUCH_CANCEL ? INPUT_MULTI_TOUCH_TYPE_CANCEL :
++                                                               INPUT_MULTI_TOUCH_TYPE_UPDATE;
++
++    qemu_input_queue_mtt(con, type, slot, tracking_id);
++    if (type == INPUT_MULTI_TOUCH_TYPE_BEGIN || type == INPUT_MULTI_TOUCH_TYPE_UPDATE) {
++        qemu_input_queue_mtt_abs(con, INPUT_AXIS_X, x, 0, w, slot, tracking_id);
++        qemu_input_queue_mtt_abs(con, INPUT_AXIS_Y, y, 0, h, slot, tracking_id);
++    }
++    /* Primary finger also drives absolute-pointer devices (usb-tablet), which is
++     * what UTM-targeted Android images expect (they convert tablet → touch). */
++    if (slot == 0) {
++        qemu_input_queue_abs(con, INPUT_AXIS_X, x, 0, w);
++        qemu_input_queue_abs(con, INPUT_AXIS_Y, y, 0, h);
++        if (type == INPUT_MULTI_TOUCH_TYPE_BEGIN) {
++            qemu_input_queue_btn(con, INPUT_BUTTON_LEFT, true);
++        } else if (type == INPUT_MULTI_TOUCH_TYPE_END || type == INPUT_MULTI_TOUCH_TYPE_CANCEL) {
++            qemu_input_queue_btn(con, INPUT_BUTTON_LEFT, false);
++        }
++    }
++    qemu_input_event_sync();
++}
++
++void qemu_ios_input_key_linux(int linux_keycode, int down)
++{
++    qemu_input_event_send_key_qcode(ios_input_con(),
++                                    qemu_input_linux_to_qcode(linux_keycode), down);
++}
++
++static QemuDisplay qemu_display_ios = {
++    .type       = DISPLAY_TYPE_IOS,
++    .early_init = ios_display_early_init,
++    .init       = ios_display_init,
++};
++
++static void register_ios_display(void)
++{
++    qemu_display_register(&qemu_display_ios);
++}
++
++type_init(register_ios_display);
+diff --git a/ui/meson.build b/ui/meson.build
+index 35fb04c..f7969d2 100644
+--- a/ui/meson.build
++++ b/ui/meson.build
+@@ -58,6 +58,11 @@ if curses.found()
+ endif
+ 
+ system_ss.add(opengl)
++if get_option('ios_library')
++  # AndroiOS: IOSurface-backed display + touch/key input for the host app.
++  system_ss.add(files('ios.c'), opengl, pixman,
++                dependency('appleframeworks', modules: ['IOSurface', 'CoreFoundation']))
++endif
+ if opengl.found()
+   opengl_ss = ss.source_set()
+   opengl_ss.add(gbm, pixman)

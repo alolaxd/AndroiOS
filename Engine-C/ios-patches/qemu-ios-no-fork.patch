@@ -1,0 +1,55 @@
+diff --git a/os-posix.c b/os-posix.c
+index 43f9a43..3a68092 100644
+--- a/os-posix.c
++++ b/os-posix.c
+@@ -24,6 +24,9 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
+ #include <sys/resource.h>
+ #include <sys/wait.h>
+ #include <pwd.h>
+@@ -211,6 +214,13 @@ int os_set_daemonize(bool d)
+ 
+ void os_daemonize(void)
+ {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++    if (daemonize) {
++        error_report("-daemonize is not supported on iOS (no fork())");
++        exit(1);
++    }
++    return;
++#endif
+     if (daemonize) {
+         pid_t pid;
+         int fds[2];
+diff --git a/util/oslib-posix.c b/util/oslib-posix.c
+index 11b35e4..8074416 100644
+--- a/util/oslib-posix.c
++++ b/util/oslib-posix.c
+@@ -27,6 +27,9 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
+ #include <termios.h>
+ 
+ #include <glib/gprintf.h>
+@@ -113,7 +116,12 @@ int qemu_get_thread_id(void)
+ 
+ int qemu_daemon(int nochdir, int noclose)
+ {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++    errno = ENOSYS;
++    return -1;
++#else
+     return daemon(nochdir, noclose);
++#endif
+ }
+ 
+ bool qemu_write_pidfile(const char *path, Error **errp)

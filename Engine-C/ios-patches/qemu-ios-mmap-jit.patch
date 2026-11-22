@@ -1,0 +1,38 @@
+diff --git a/include/qemu/osdep.h b/include/qemu/osdep.h
+index fdff07f..9c3939d 100644
+--- a/include/qemu/osdep.h
++++ b/include/qemu/osdep.h
+@@ -800,8 +800,15 @@ size_t qemu_get_host_physmem(void);
+ /*
+  * Toggle write/execute on the pages marked MAP_JIT
+  * for the current thread.
++ *
++ * pthread_jit_write_protect_np() is macOS-only. On iOS, TCG instead uses
++ * split-wx (an RW mapping plus an RX alias made with mach_vm_remap), which
++ * needs no per-thread toggling, so these become no-ops there.
+  */
+ #ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
++#if defined(__APPLE__) && !TARGET_OS_IPHONE
+ static inline void qemu_thread_jit_execute(void)
+ {
+     pthread_jit_write_protect_np(true);
+diff --git a/tcg/region.c b/tcg/region.c
+index 478ec05..c8259a6 100644
+--- a/tcg/region.c
++++ b/tcg/region.c
+@@ -687,6 +687,13 @@ static int alloc_code_gen_buffer(size_t size, int splitwx, Error **errp)
+     ERRP_GUARD();
+     int prot, flags;
+ 
++#if defined(CONFIG_DARWIN) && TARGET_OS_IPHONE
++    /*
++     * iOS has no pthread_jit_write_protect_np(), so a single MAP_JIT RWX
++     * buffer is unusable: split-wx is the only way TCG can JIT here.
++     */
++    splitwx = 1;
++#endif
+     if (splitwx) {
+         prot = alloc_code_gen_buffer_splitwx(size, errp);
+         if (prot >= 0) {

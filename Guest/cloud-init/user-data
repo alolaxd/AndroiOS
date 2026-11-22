@@ -1,0 +1,139 @@
+#cloud-config
+# AndroiOS guest: Ubuntu 24.04 arm64 + Mesa virgl + cage kiosk + Waydroid (LineageOS).
+# Android renders with GLES → Mesa virgl → virtio-gpu → host virglrenderer → ANGLE → Metal.
+hostname: androios
+users:
+  - name: android
+    gecos: AndroiOS
+    groups: [sudo, video, render, input, dialout]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: false
+    plain_text_passwd: android
+package_update: true
+package_upgrade: false
+write_files:
+  - path: /etc/systemd/system/getty@tty1.service.d/autologin.conf
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=-/sbin/agetty --autologin android --noclear %I $TERM
+  - path: /home/android/.bash_profile
+    owner: android:android
+    defer: true
+    content: |
+      # On tty1, run the AndroiOS session chosen on the kernel command line:
+      #   androios.mode=android (default) | bench | shell
+      if [ "$(tty)" = /dev/tty1 ]; then
+        mode=$(sed -n 's/.*androios\.mode=\([a-z]*\).*/\1/p' /proc/cmdline)
+        case "${mode:-android}" in
+          android) exec cage -d -s -- waydroid show-full-ui ;;
+          *) ;;   # bench is a system service; shell = plain login
+        esac
+      fi
+  # androios.mode=bench: GPU benchmark straight on DRM, results on the serial console.
+  - path: /etc/systemd/system/androios-bench.service
+    content: |
+      [Unit]
+      Description=AndroiOS GPU benchmark (glmark2 on virtio-gpu/virgl)
+      ConditionKernelCommandLine=androios.mode=bench
+      After=systemd-user-sessions.service
+      [Service]
+      Type=oneshot
+      ExecStartPre=/bin/sh -c 'echo AIOS_BENCH_START > /dev/ttyAMA0'
+      ExecStart=/bin/sh -c 'glmark2-es2-drm -s 720x1280 --visual-config a=0 -b build:use-vbo=true -b texture -b shading:shading=phong -b refract -b terrain -b desktop -b jellyfish > /dev/ttyAMA0 2>&1'
+      ExecStartPost=/bin/sh -c 'echo AIOS_BENCH_END > /dev/ttyAMA0'
+      [Install]
+      WantedBy=multi-user.target
+  # Android's renderer, chosen on the kernel command line (androios.gpu=soft|virgl):
+  #  soft  (default): Android renders with SwiftShader into shm buffers; the
+  #         compositor (cage) still draws on the host GPU via virgl → ANGLE → Metal.
+  #  virgl: Android renders with Mesa virgl on the host GPU. Android 13 boots and
+  #         RenderEngine runs on ANGLE/Metal, but its dmabufs arrive black in the
+  #         compositor today, hence opt-in.
+  - path: /usr/local/bin/androios-gpu
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      p=/var/lib/waydroid/waydroid_base.prop
+      mode=$(sed -n 's/.*androios\.gpu=\([a-z]*\).*/\1/p' /proc/cmdline)
+      if [ "${mode:-soft}" = virgl ] && [ -e /dev/dri/renderD128 ]; then
+        grep -q "egl=mesa" $p || waydroid upgrade -o
+      else
+        sed -i -e 's/^ro.hardware.egl=.*/ro.hardware.egl=swiftshader/' \
+               -e 's/^ro.hardware.gralloc=.*/ro.hardware.gralloc=default/' -e '/^gralloc.gbm.device=/d' $p
+      fi
+      grep -E "gralloc|egl" $p | sed "s/^/AIOS_WAYDROID_PROP /" > /dev/ttyAMA0
+  - path: /etc/systemd/system/androios-gpu.service
+    content: |
+      [Unit]
+      Description=AndroiOS: choose Android's renderer (androios.gpu=soft|virgl)
+      Before=waydroid-container.service getty@tty1.service
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/androios-gpu
+      [Install]
+      WantedBy=multi-user.target
+  # Progress markers on the serial console (read by the app's boot log / test harness).
+  - path: /usr/local/bin/androios-report
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      out=/dev/ttyAMA0
+      echo "AIOS_LINUX_UP $(cat /proc/uptime | cut -d' ' -f1)s" > $out
+      for f in /sys/class/drm/card*/device/driver; do echo "AIOS_DRM $(basename $(readlink $f))" > $out; done
+      grep -q androios.mode=android /proc/cmdline || exit 0
+      i=0
+      while [ $i -lt 360 ]; do
+        if [ "$(waydroid prop get sys.boot_completed 2>/dev/null)" = 1 ]; then
+          echo "AIOS_ANDROID_BOOTED $(cut -d' ' -f1 /proc/uptime)s" > $out
+          waydroid shell -- getprop ro.build.version.release 2>/dev/null | sed 's/^/AIOS_ANDROID_VERSION /' > $out
+          waydroid shell -- getprop ro.hardware.egl 2>/dev/null | sed 's/^/AIOS_ANDROID_EGL /' > $out
+          waydroid shell -- dumpsys SurfaceFlinger 2>/dev/null | grep -m3 -i "GLES:\|renderer" | sed 's/^/AIOS_SF /' > $out
+          exit 0
+        fi
+        sleep 5; i=$((i+1))
+      done
+      echo AIOS_ANDROID_TIMEOUT > $out
+  - path: /etc/systemd/system/androios-report.service
+    content: |
+      [Unit]
+      Description=AndroiOS boot progress markers
+      After=waydroid-container.service
+      [Service]
+      ExecStart=/usr/local/bin/androios-report
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/serial-getty@ttyAMA0.service.d/autologin.conf
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=-/sbin/agetty --autologin android --keep-baud 115200,57600,38400,9600 %I $TERM
+  - path: /etc/sysctl.d/90-androios.conf
+    content: |
+      vm.swappiness=10
+  - path: /etc/modules-load.d/androios-binder.conf
+    content: |
+      binder_linux
+  - path: /etc/modprobe.d/androios-binder.conf
+    content: |
+      options binder_linux devices=binder,hwbinder,vndbinder
+runcmd:
+  - [sh, -c, "export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends cage seatd libgl1-mesa-dri mesa-utils glmark2-es2-drm curl ca-certificates lsb-release linux-modules-extra-$(uname -r) 2>&1 | tail -5"]
+  # Android's binder IPC driver ships in linux-modules-extra on Ubuntu.
+  - [sh, -c, "modprobe binder_linux devices=binder,hwbinder,vndbinder; ls -l /dev/*binder* > /dev/ttyAMA0 2>&1"]
+  - [sh, -c, "curl -fsSL https://repo.waydro.id | bash"]
+  - [sh, -c, "DEBIAN_FRONTEND=noninteractive apt-get install -y waydroid 2>&1 | tail -3"]
+  # SourceForge mirrors occasionally serve a corrupt zip (hash mismatch): retry.
+  - [sh, -c, "for i in 1 2 3; do waydroid init -f -s VANILLA > /dev/ttyAMA0 2>&1 && ls /var/lib/waydroid/images/system.img >/dev/null 2>&1 && break; echo AIOS_RETRY_waydroid_init > /dev/ttyAMA0; done"]
+  - [sh, -c, "for b in cage seatd glmark2-es2-drm waydroid; do command -v $b >/dev/null && echo AIOS_OK_$b || echo AIOS_MISSING_$b; done > /dev/ttyAMA0; ls /var/lib/waydroid/images/ > /dev/ttyAMA0 2>&1 && echo AIOS_OK_lineage_images > /dev/ttyAMA0"]
+  # waydroid init detects the virtio_gpu render node and selects gralloc=gbm / egl=mesa itself.
+  - [systemctl, enable, waydroid-container, androios-bench, androios-report, androios-gpu]
+  - [systemctl, disable, --now, snapd.service, snapd.socket, unattended-upgrades, apt-daily.timer, apt-daily-upgrade.timer, ModemManager]
+  - [sh, -c, "apt-get clean; rm -rf /var/lib/apt/lists/*"]
+  # Hand the kernel + initramfs to the host so the app can direct-boot (no UEFI/GRUB under TCG).
+  - [sh, -c, "mkdir -p /mnt/export && mount -t 9p -o trans=virtio,version=9p2000.L export /mnt/export && cp -L /boot/vmlinuz /boot/initrd.img /mnt/export/ && sync && umount /mnt/export"]
+  - [sh, -c, "echo ANDROIOS_PROVISION_DONE > /dev/ttyAMA0"]
+power_state:
+  mode: poweroff
+  timeout: 60

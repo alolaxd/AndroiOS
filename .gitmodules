@@ -1,0 +1,3 @@
+[submodule "Engine-C/qemu"]
+	path = Engine-C/qemu
+	url = https://gitlab.com/qemu-project/qemu.git

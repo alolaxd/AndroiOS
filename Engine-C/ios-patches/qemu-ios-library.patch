@@ -1,0 +1,323 @@
+diff --git a/include/qemu-ios-api.h b/include/qemu-ios-api.h
+new file mode 100644
+index 0000000..9a32d4f
+--- /dev/null
++++ b/include/qemu-ios-api.h
+@@ -0,0 +1,65 @@
++/*
++ * Entry points exported by QEMU.framework (see qemu/system/ios-main.c).
++ * Consumed by the AndroiOS engine layer; not part of upstream QEMU.
++ */
++#ifndef QEMU_IOS_API_H
++#define QEMU_IOS_API_H
++
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#define QEMU_IOS_EXPORT __attribute__((visibility("default")))
++
++/* Runs QEMU to completion on the calling thread. Only once per process. */
++QEMU_IOS_EXPORT int qemu_ios_main(int argc, char **argv);
++
++QEMU_IOS_EXPORT char *qemu_ios_console_read(const char *chardev_id, int max_bytes);
++QEMU_IOS_EXPORT int qemu_ios_console_write(const char *chardev_id, const uint8_t *buf, int len);
++QEMU_IOS_EXPORT void qemu_ios_free(void *p);
++
++QEMU_IOS_EXPORT void qemu_ios_request_shutdown(void);
++QEMU_IOS_EXPORT void qemu_ios_pause(void);
++QEMU_IOS_EXPORT void qemu_ios_resume(void);
++QEMU_IOS_EXPORT int qemu_ios_is_running(void);
++
++/* ---- display (-display ios[,gl=es]) ------------------------------------
++ * Called on QEMU's main thread whenever a new frame is in the IOSurface.
++ * The IOSurfaceRef stays valid until the next callback reports a different
++ * one (resolution change); retain it if you keep it longer. */
++typedef void (*qemu_ios_frame_callback)(void *iosurface, int width, int height,
++                                        uint64_t seq, void *ctx);
++QEMU_IOS_EXPORT void qemu_ios_display_set_callback(qemu_ios_frame_callback cb, void *ctx);
++
++/* ---- input (virtio-multitouch-pci / virtio-keyboard-pci) ---------------- */
++enum { QEMU_IOS_TOUCH_DOWN = 0, QEMU_IOS_TOUCH_MOVE = 1, QEMU_IOS_TOUCH_UP = 2,
++       QEMU_IOS_TOUCH_CANCEL = 3 };
++/* x/y are in a w×h coordinate space (usually the guest display size). */
++QEMU_IOS_EXPORT void qemu_ios_send_touch(int slot, int tracking_id, int x, int y,
++                                         int w, int h, int action);
++QEMU_IOS_EXPORT void qemu_ios_send_key(int linux_keycode, int down);
++
++/* ---- state save (migration to a file) -----------------------------------
++ * Pauses the guest and writes its full state to `path`. Blocks until done.
++ * Returns 0 on success, -1 if the device set is not migratable (e.g.
++ * virtio-gpu-gl with virgl) or the write failed; `err` gets a message.
++ * Restore by starting QEMU with: -incoming file:<path> */
++QEMU_IOS_EXPORT int qemu_ios_save_state(const char *path, char *err, int err_len);
++
++/* ---- audio (-audiodev ios,id=snd0) ---------------------------------------
++ * Called on QEMU's audio timer with interleaved native-endian s16 PCM. */
++typedef void (*qemu_ios_audio_callback)(const int16_t *frames, int frame_count,
++                                        int sample_rate, int channels, void *ctx);
++QEMU_IOS_EXPORT void qemu_ios_audio_set_callback(qemu_ios_audio_callback cb, void *ctx);
++
++/* ---- internal: implemented in ui/ios.c, BQL must be held --------------- */
++void qemu_ios_input_touch(int slot, int tracking_id, int x, int y, int w, int h, int action);
++void qemu_ios_input_key_linux(int linux_keycode, int down);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
+diff --git a/meson.build b/meson.build
+index d48e87d..df1e4c5 100644
+--- a/meson.build
++++ b/meson.build
+@@ -2412,6 +2412,7 @@ config_host_data.set('CONFIG_FREEBSD', host_os == 'freebsd')
+ config_host_data.set('CONFIG_CAPSTONE', capstone.found())
+ config_host_data.set('CONFIG_COCOA', cocoa.found())
+ config_host_data.set('CONFIG_DARWIN', host_os == 'darwin')
++config_host_data.set('CONFIG_IOS_DISPLAY', get_option('ios_library'))
+ config_host_data.set('CONFIG_FDT', fdt.found())
+ config_host_data.set('CONFIG_FUZZ', get_option('fuzzing'))
+ config_host_data.set('CONFIG_GCOV', get_option('b_coverage'))
+@@ -4228,7 +4229,7 @@ foreach target : target_dirs
+     execs = [{
+       'name': 'qemu-system-' + target_name,
+       'win_subsystem': 'console',
+-      'sources': files('system/main.c'),
++      'sources': get_option('ios_library') ? files('system/ios-main.c') : files('system/main.c'),
+       'dependencies': [sdl]
+     }]
+     if host_os == 'windows' and (sdl.found() or gtk.found())
+@@ -4258,6 +4259,17 @@ foreach target : target_dirs
+   endif
+   foreach exe: execs
+     exe_name = exe['name']
++    if get_option('ios_library') and target.endswith('-softmmu')
++      # iOS: no fork/exec, so the emulator is a dylib driven by the host app.
++      emulators += {exe['name']: shared_library(exe_name, exe['sources'],
++               install: true,
++               c_args: c_args,
++               dependencies: arch_deps + exe['dependencies'],
++               objects: lib.extract_all_objects(recursive: true),
++               link_depends: [block_syms, qemu_syms],
++               link_args: link_args + ['-Wl,-install_name,@rpath/QEMU.framework/QEMU'])}
++      continue
++    endif
+     if host_os == 'darwin'
+       exe_name += '-unsigned'
+     endif
+diff --git a/meson_options.txt b/meson_options.txt
+index 5eeaf3e..4ac8e02 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -382,3 +382,5 @@ option('rust', type: 'feature', value: 'disabled',
+        description: 'Rust support')
+ option('strict_rust_lints', type: 'boolean', value: false,
+        description: 'Enable stricter set of Rust warnings')
++option('ios_library', type: 'boolean', value: false,
++       description: 'Build system emulators as dylibs with qemu_ios_main() (iOS host)')
+diff --git a/system/ios-main.c b/system/ios-main.c
+new file mode 100644
+index 0000000..102ca8e
+--- /dev/null
++++ b/system/ios-main.c
+@@ -0,0 +1,197 @@
++/*
++ * iOS in-process entry points for QEMU (AndroiOS).
++ *
++ * iOS forbids fork()/exec(), so QEMU is linked into the app as a dylib and
++ * driven from a background thread. These functions are the only symbols the
++ * host app calls; everything else stays internal to QEMU.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/main-loop.h"
++#include "sysemu/sysemu.h"
++#include "sysemu/runstate.h"
++#include "chardev/char.h"
++#include "chardev/char-fe.h"
++#include "qapi/error.h"
++#include "qapi/qapi-commands-char.h"
++#include "qapi/qapi-commands-migration.h"
++#include "migration/misc.h"
++#include "qemu-ios-api.h"
++
++static volatile int ios_started;
++/* Set once qemu_init() has created the BQL and chardevs; cleared before
++ * teardown. Every host-thread entry point checks it first. */
++static volatile int ios_ready;
++
++static bool ios_enter(void)
++{
++    if (!__atomic_load_n(&ios_ready, __ATOMIC_ACQUIRE)) {
++        return false;
++    }
++    bql_lock();
++    return true;
++}
++
++int qemu_ios_main(int argc, char **argv)
++{
++    int status;
++
++    if (__atomic_exchange_n(&ios_started, 1, __ATOMIC_SEQ_CST)) {
++        /* QEMU keeps process-global state; it can only run once per launch. */
++        return -1;
++    }
++    qemu_init(argc, argv);
++    __atomic_store_n(&ios_ready, 1, __ATOMIC_RELEASE);
++    status = qemu_main_loop();
++    __atomic_store_n(&ios_ready, 0, __ATOMIC_RELEASE);
++    qemu_cleanup(status);
++    return status;
++}
++
++/*
++ * Console output: the guest serial port is wired to a "ringbuf" chardev.
++ * The host polls it. Returns a g_malloc'd NUL-terminated buffer (may be
++ * empty) that the caller frees with qemu_ios_free(), or NULL on error.
++ */
++char *qemu_ios_console_read(const char *chardev_id, int max_bytes)
++{
++    Error *err = NULL;
++    char *data;
++
++    if (!ios_enter()) {
++        return g_strdup("");
++    }
++    data = qmp_ringbuf_read(chardev_id, max_bytes, true, DATA_FORMAT_UTF8, &err);
++    bql_unlock();
++    if (err) {
++        error_free(err);
++        return NULL;
++    }
++    return data;
++}
++
++/* Console input: push bytes from the host into the guest UART. */
++int qemu_ios_console_write(const char *chardev_id, const uint8_t *buf, int len)
++{
++    Chardev *chr;
++    int n = 0;
++
++    if (!ios_enter()) {
++        return -1;
++    }
++    chr = qemu_chr_find(chardev_id);
++    if (chr) {
++        n = MIN(len, qemu_chr_be_can_write(chr));
++        if (n > 0) {
++            qemu_chr_be_write(chr, buf, n);
++        }
++    } else {
++        n = -1;
++    }
++    bql_unlock();
++    return n;
++}
++
++void qemu_ios_free(void *p)
++{
++    g_free(p);
++}
++
++void qemu_ios_request_shutdown(void)
++{
++    if (ios_enter()) {
++        qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_UI);
++        bql_unlock();
++    }
++}
++
++void qemu_ios_pause(void)
++{
++    if (!ios_enter()) {
++        return;
++    }
++    if (runstate_is_running()) {
++        vm_stop(RUN_STATE_PAUSED);
++    }
++    bql_unlock();
++}
++
++void qemu_ios_resume(void)
++{
++    if (!ios_enter()) {
++        return;
++    }
++    if (!runstate_is_running()) {
++        vm_start();
++    }
++    bql_unlock();
++}
++
++int qemu_ios_is_running(void)
++{
++    return __atomic_load_n(&ios_ready, __ATOMIC_ACQUIRE) && runstate_is_running();
++}
++
++void qemu_ios_send_touch(int slot, int tracking_id, int x, int y, int w, int h, int action)
++{
++    if (ios_enter()) {
++        qemu_ios_input_touch(slot, tracking_id, x, y, w, h, action);
++        bql_unlock();
++    }
++}
++
++void qemu_ios_send_key(int linux_keycode, int down)
++{
++    if (ios_enter()) {
++        qemu_ios_input_key_linux(linux_keycode, down);
++        bql_unlock();
++    }
++}
++
++int qemu_ios_save_state(const char *path, char *errbuf, int err_len)
++{
++    Error *err = NULL;
++    g_autofree char *uri = g_strdup_printf("file:%s", path);
++    MigrationInfo *info;
++    int ret = -1;
++
++    if (!ios_enter()) {
++        g_strlcpy(errbuf, "VM not running", err_len);
++        return -1;
++    }
++    if (runstate_is_running()) {
++        vm_stop(RUN_STATE_PAUSED);
++    }
++    qmp_migrate(uri, false, NULL, false, false, false, false, &err);
++    bql_unlock();
++    if (err) {
++        g_strlcpy(errbuf, error_get_pretty(err), err_len);
++        error_free(err);
++        return -1;
++    }
++    /* Migration runs on its own thread; poll until it settles. */
++    for (;;) {
++        g_usleep(20 * 1000);
++        bql_lock();
++        info = qmp_query_migrate(NULL);
++        bql_unlock();
++        if (!info->has_status) {
++            qapi_free_MigrationInfo(info);
++            continue;
++        }
++        if (info->status == MIGRATION_STATUS_COMPLETED) {
++            ret = 0;
++        } else if (info->status == MIGRATION_STATUS_FAILED ||
++                   info->status == MIGRATION_STATUS_CANCELLED) {
++            g_strlcpy(errbuf, info->error_desc ? info->error_desc : "migration failed",
++                      err_len);
++        } else {
++            qapi_free_MigrationInfo(info);
++            continue;
++        }
++        qapi_free_MigrationInfo(info);
++        return ret;
++    }
++}

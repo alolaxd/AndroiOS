@@ -1,0 +1,10 @@
+Engine-C/build/
+Engine-C/*.log
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+Guest/build/
+Guest/*.log
+Engine-C/*.png

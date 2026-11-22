@@ -1,0 +1,17 @@
+diff --git a/block/file-posix.c b/block/file-posix.c
+index 90fa543..de3682b 100644
+--- a/block/file-posix.c
++++ b/block/file-posix.c
+@@ -44,10 +44,10 @@
+ 
+ #if defined(__APPLE__) && (__MACH__)
+ #include <sys/ioctl.h>
++#include <sys/param.h>
++#include <sys/mount.h>   /* fstatfs(), also needed without host block devices (iOS) */
+ #if defined(HAVE_HOST_BLOCK_DEVICE)
+ #include <paths.h>
+-#include <sys/param.h>
+-#include <sys/mount.h>
+ #include <IOKit/IOKitLib.h>
+ #include <IOKit/IOBSD.h>
+ #include <IOKit/storage/IOMediaBSDClient.h>

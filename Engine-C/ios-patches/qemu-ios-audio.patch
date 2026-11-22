@@ -1,0 +1,227 @@
+diff --git a/audio/audio.c b/audio/audio.c
+index af0ae33..945addf 100644
+--- a/audio/audio.c
++++ b/audio/audio.c
+@@ -2035,6 +2035,9 @@ void audio_create_pdos(Audiodev *dev)
+ #endif
+ #ifdef CONFIG_SPICE
+         CASE(SPICE, spice, );
++#endif
++#ifdef CONFIG_IOS_DISPLAY
++        CASE(IOS, ios, );
+ #endif
+         CASE(WAV, wav, );
+ 
+diff --git a/audio/audio_template.h b/audio/audio_template.h
+index 7ccfec0..0223167 100644
+--- a/audio/audio_template.h
++++ b/audio/audio_template.h
+@@ -384,6 +384,10 @@ AudiodevPerDirectionOptions *glue(audio_get_pdo_, TYPE)(Audiodev *dev)
+ #ifdef CONFIG_SPICE
+     case AUDIODEV_DRIVER_SPICE:
+         return dev->u.spice.TYPE;
++#endif
++#ifdef CONFIG_IOS_DISPLAY
++    case AUDIODEV_DRIVER_IOS:
++        return dev->u.ios.TYPE;
+ #endif
+     case AUDIODEV_DRIVER_WAV:
+         return dev->u.wav.TYPE;
+diff --git a/audio/iosaudio.c b/audio/iosaudio.c
+new file mode 100644
+index 0000000..13a7325
+--- /dev/null
++++ b/audio/iosaudio.c
+@@ -0,0 +1,148 @@
++/*
++ * "ios" audio backend (AndroiOS): hands the guest's mixed PCM output to the
++ * embedding app through a callback, paced in real time like the "none"
++ * driver. The app feeds it to AVAudioEngine. Capture is silence for now.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++#include "qemu/osdep.h"
++#include "qemu/module.h"
++#include "audio.h"
++#include "qemu/timer.h"
++
++#define AUDIO_CAP "ios"
++#include "audio_int.h"
++#include "qemu-ios-api.h"
++
++typedef struct IOSVoiceOut {
++    HWVoiceOut hw;
++    RateCtl rate;
++} IOSVoiceOut;
++
++typedef struct IOSVoiceIn {
++    HWVoiceIn hw;
++    RateCtl rate;
++} IOSVoiceIn;
++
++static qemu_ios_audio_callback ios_audio_cb;
++static void *ios_audio_ctx;
++
++void qemu_ios_audio_set_callback(qemu_ios_audio_callback cb, void *ctx)
++{
++    ios_audio_ctx = ctx;
++    __atomic_store_n(&ios_audio_cb, cb, __ATOMIC_RELEASE);
++}
++
++static size_t ios_write(HWVoiceOut *hw, void *buf, size_t len)
++{
++    IOSVoiceOut *v = (IOSVoiceOut *)hw;
++    size_t bytes = audio_rate_get_bytes(&v->rate, &hw->info, len);
++    qemu_ios_audio_callback cb = __atomic_load_n(&ios_audio_cb, __ATOMIC_ACQUIRE);
++
++    if (cb && bytes) {
++        cb((const int16_t *)buf, (int)(bytes / hw->info.bytes_per_frame),
++           hw->info.freq, hw->info.nchannels, ios_audio_ctx);
++    }
++    return bytes;
++}
++
++static int ios_init_out(HWVoiceOut *hw, struct audsettings *as, void *drv_opaque)
++{
++    IOSVoiceOut *v = (IOSVoiceOut *)hw;
++    struct audsettings obt = *as;
++
++    /* Always hand the host interleaved native-endian s16; mixeng converts. */
++    obt.fmt = AUDIO_FORMAT_S16;
++    obt.endianness = HOST_BIG_ENDIAN;
++    audio_pcm_init_info(&hw->info, &obt);
++    hw->samples = 512;          /* ~10 ms at 48 kHz */
++    audio_rate_start(&v->rate);
++    return 0;
++}
++
++static void ios_fini_out(HWVoiceOut *hw)
++{
++}
++
++static void ios_enable_out(HWVoiceOut *hw, bool enable)
++{
++    IOSVoiceOut *v = (IOSVoiceOut *)hw;
++
++    if (enable) {
++        audio_rate_start(&v->rate);
++    }
++}
++
++static int ios_init_in(HWVoiceIn *hw, struct audsettings *as, void *drv_opaque)
++{
++    IOSVoiceIn *v = (IOSVoiceIn *)hw;
++
++    audio_pcm_init_info(&hw->info, as);
++    hw->samples = 512;
++    audio_rate_start(&v->rate);
++    return 0;
++}
++
++static void ios_fini_in(HWVoiceIn *hw)
++{
++}
++
++static size_t ios_read(HWVoiceIn *hw, void *buf, size_t size)
++{
++    IOSVoiceIn *v = (IOSVoiceIn *)hw;
++    int64_t bytes = audio_rate_get_bytes(&v->rate, &hw->info, size);
++
++    audio_pcm_info_clear_buf(&hw->info, buf, bytes / hw->info.bytes_per_frame);
++    return bytes;
++}
++
++static void ios_enable_in(HWVoiceIn *hw, bool enable)
++{
++    IOSVoiceIn *v = (IOSVoiceIn *)hw;
++
++    if (enable) {
++        audio_rate_start(&v->rate);
++    }
++}
++
++static void *ios_audio_init(Audiodev *dev, Error **errp)
++{
++    return &ios_audio_init;
++}
++
++static void ios_audio_fini(void *opaque)
++{
++}
++
++static struct audio_pcm_ops ios_pcm_ops = {
++    .init_out        = ios_init_out,
++    .fini_out        = ios_fini_out,
++    .write           = ios_write,
++    .buffer_get_free = audio_generic_buffer_get_free,
++    .run_buffer_out  = audio_generic_run_buffer_out,
++    .enable_out      = ios_enable_out,
++
++    .init_in         = ios_init_in,
++    .fini_in         = ios_fini_in,
++    .read            = ios_read,
++    .run_buffer_in   = audio_generic_run_buffer_in,
++    .enable_in       = ios_enable_in,
++};
++
++static struct audio_driver ios_audio_driver = {
++    .name           = "ios",
++    .descr          = "Host app callback (AndroiOS)",
++    .init           = ios_audio_init,
++    .fini           = ios_audio_fini,
++    .pcm_ops        = &ios_pcm_ops,
++    .max_voices_out = 1,
++    .max_voices_in  = 1,
++    .voice_size_out = sizeof(IOSVoiceOut),
++    .voice_size_in  = sizeof(IOSVoiceIn),
++};
++
++static void register_audio_ios(void)
++{
++    audio_driver_register(&ios_audio_driver);
++}
++type_init(register_audio_ios);
+diff --git a/audio/meson.build b/audio/meson.build
+index 59f0a43..81dd186 100644
+--- a/audio/meson.build
++++ b/audio/meson.build
+@@ -8,6 +8,9 @@ system_ss.add(files(
+ ))
+ 
+ system_ss.add(when: coreaudio, if_true: files('coreaudio.m'))
++if get_option('ios_library')
++  system_ss.add(files('iosaudio.c'))
++endif
+ system_ss.add(when: dsound, if_true: files('dsoundaudio.c', 'audio_win_int.c'))
+ 
+ audio_modules = {}
+diff --git a/qapi/audio.json b/qapi/audio.json
+index 519697c..3497272 100644
+--- a/qapi/audio.json
++++ b/qapi/audio.json
+@@ -447,6 +447,8 @@
+ #
+ # @jack: JACK audio backend (since 5.1)
+ #
++# @ios: callback into an embedding iOS app (AndroiOS)
++#
+ # Since: 4.0
+ ##
+ { 'enum': 'AudiodevDriver',
+@@ -462,6 +464,7 @@
+             { 'name': 'sdl', 'if': 'CONFIG_AUDIO_SDL' },
+             { 'name': 'sndio', 'if': 'CONFIG_AUDIO_SNDIO' },
+             { 'name': 'spice', 'if': 'CONFIG_SPICE' },
++            { 'name': 'ios', 'if': 'CONFIG_IOS_DISPLAY' },
+             'wav' ] }
+ 
+ ##
+@@ -486,6 +489,8 @@
+   'discriminator': 'driver',
+   'data': {
+     'none':      'AudiodevGenericOptions',
++    'ios':       { 'type': 'AudiodevGenericOptions',
++                   'if': 'CONFIG_IOS_DISPLAY' },
+     'alsa':      { 'type': 'AudiodevAlsaOptions',
+                    'if': 'CONFIG_AUDIO_ALSA' },
+     'coreaudio': { 'type': 'AudiodevCoreaudioOptions',

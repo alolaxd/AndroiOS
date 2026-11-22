@@ -1,0 +1,10 @@
+{
+  "name": "LineageOS",
+  "osDescription": "LineageOS 23.2 (Android 16), virtio_arm64only",
+  "gpu": "virgl",
+  "displayWidth": 720,
+  "displayHeight": 1280,
+  "targetFPS": 60,
+  "network": true,
+  "audio": true
+}
