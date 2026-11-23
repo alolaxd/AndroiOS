@@ -63,7 +63,7 @@ On the device:
 | `Guest/build-guest.sh` | Alternative guest: Ubuntu + Waydroid (see docs/BUILDING.md) |
 
 ## Important Context
-**Almost all of this app's code was made by Claude**. Claude wrote the code, ironed everything out, but the design decisions, ideas, architecture choices, and direction were all mine. I guided the implementation, decided how things should work, and shaped the end result.
+**Almost all of this app's code was made by Claude**. Claude wrote the code, ironed everything out, but the design decisions, ideas, architecture choices, and direction were all mine. I guided the implementation, decided how things should work, and shaped the end result. I'm a student, still learning. Expect to see some of my own updates without Claude 🙂
 
 
 ## License
