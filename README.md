@@ -26,6 +26,12 @@ UTM/QEMU: UEFI → GRUB → Android, Mesa virgl, drm_hwcomposer.
 - Audio: AC97 → QEMU `ios` audiodev → app callback
 - Boot animation at 40–50 FPS; GPU benchmark (glmark2) 103–130 FPS
 
+## Known Issues
+- App crashes when ran with JIT – just a dark screen
+  **Possible Fix**: Base AndroiOS JIT around universal.js script
+- SideStore installation: "The file can't be opened"
+   **Possible Fix**: rebuild ipa around sidesign
+
 The iOS app builds for device and simulator. It **has not yet run on a real iPhone.**
 
 ## Quick start
