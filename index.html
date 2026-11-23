@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AndroiOS – Run Android on iPhone and iPad</title>
+<meta name="description" content="AndroiOS runs Android (LineageOS 23.2 / Android 16) on iPhone and iPad as an AArch64 virtual machine, using QEMU's JIT and Metal GPU acceleration. Open source, sideloaded, early alpha.">
+<link rel="canonical" href="https://alolaxd.github.io/AndroiOS/">
+<meta name="theme-color" content="#0d0d0f">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="AndroiOS – Run Android on iPhone and iPad">
+<meta property="og:description" content="An open-source iOS app that boots LineageOS 23.2 (Android 16) in a QEMU virtual machine, with Android's graphics rendered on the Apple GPU through Metal.">
+<meta property="og:url" content="https://alolaxd.github.io/AndroiOS/">
+<meta property="og:site_name" content="AndroiOS">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="AndroiOS – Run Android on iPhone and iPad">
+<meta name="twitter:description" content="LineageOS 23.2 (Android 16) in a QEMU VM on iOS, with Metal GPU acceleration. Open source, early alpha.">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "AndroiOS",
+  "description": "A sideloaded iOS and iPadOS app that runs Android (LineageOS 23.2 / Android 16) as an AArch64 virtual machine using QEMU's JIT, with Android's OpenGL ES rendering translated to Metal on the Apple GPU.",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "iOS, iPadOS",
+  "softwareVersion": "0.1.0-alpha",
+  "url": "https://alolaxd.github.io/AndroiOS/",
+  "downloadUrl": "https://github.com/alolaxd/AndroiOS/releases",
+  "license": "https://github.com/alolaxd/AndroiOS/blob/main/LICENSE",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Person", "name": "alolaxd", "url": "https://github.com/alolaxd" },
+  "sameAs": ["https://github.com/alolaxd/AndroiOS"]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "Can you run Android on an iPhone?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Not natively, and not through the App Store. iOS gives apps no hypervisor, so Android has to be emulated: every Android instruction is translated by QEMU's just-in-time compiler. AndroiOS does this as a sideloaded app. It needs JIT (enabled with StikDebug) and extra memory entitlements. The project is an early alpha: LineageOS 23.2 boots in the test harness that runs the same engine code, but the app has not yet run successfully on a real iPhone or iPad." } },
+    { "@type": "Question", "name": "How does AndroiOS work?",
+      "acceptedAnswer": { "@type": "Answer", "text": "AndroiOS runs QEMU inside the app as a framework and boots the prebuilt LineageOS virtio_arm64only VM (UEFI, GRUB, Android). The CPU is emulated by QEMU's JIT. Graphics are accelerated: Android's OpenGL ES goes through Mesa virgl and virtio-gpu to virglrenderer, libepoxy and ANGLE, which translates it to Metal on the Apple GPU. Frames are shared with the SwiftUI app through an IOSurface. The GPU components are the ones UTM ships on iOS." } },
+    { "@type": "Question", "name": "What performance can I expect?",
+      "acceptedAnswer": { "@type": "Answer", "text": "GPU work is fast and CPU work is slow. In the macOS test harness on an Apple A18 Pro GPU, the LineageOS boot animation ran at 40–50 FPS and the glmark2 benchmark scored 103 (67–131 FPS per scene). Booting to the setup wizard took about 3–5 minutes. Android's UI is CPU-bound and does not reach 60 FPS under emulation. Phones and older chips will be slower." } },
+    { "@type": "Question", "name": "How to install AndroiOS",
+      "acceptedAnswer": { "@type": "Answer", "text": "Download AndroiOS-LineageOS.ipa (about 1 GB, with Android included) or AndroiOS.ipa (10 MB, app only) from the GitHub releases page. Sideload it with AltStore, SideStore, TrollStore or Xcode. Apply the increased-memory-limit and extended-virtual-addressing entitlements with GetMoreRAM, TrollStore or a paid developer profile. Enable JIT with StikDebug, then use the setup wizard's built-in LineageOS 23.2 option and boot." } },
+    { "@type": "Question", "name": "AndroiOS vs UTM",
+      "acceptedAnswer": { "@type": "Answer", "text": "UTM is a mature, general-purpose virtual machine app for iOS and macOS that runs many operating systems. AndroiOS is a small, Android-focused app built on the same approach and the same GPU components (UTM's virglrenderer and libepoxy, and WebKit's ANGLE). It adds an Android-specific setup with LineageOS bundled. UTM is the more proven choice today; AndroiOS is an early alpha that has not yet run on a real device." } }
+  ]
+}
+</script>
+
+<style>
+  :root {
+    --bg: #0d0d0f;
+    --surface: #16161a;
+    --border: #2a2a30;
+    --text: #ececf1;
+    --muted: #9a9aa5;
+    --accent: #4fb7a8;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 20px; }
+
+  header.top {
+    border-bottom: 1px solid var(--border);
+  }
+  header.top .wrap {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 56px;
+  }
+  .brand { font-weight: 600; color: var(--text); }
+  nav a { color: var(--muted); margin-left: 20px; font-size: 14px; }
+
+  .hero { padding: 64px 0 48px; display: grid; grid-template-columns: 1fr 200px; gap: 40px; align-items: center; }
+  .hero h1 { font-size: 44px; line-height: 1.1; margin: 0 0 12px; letter-spacing: -0.02em; }
+  .hero p.lede { font-size: 19px; color: var(--muted); margin: 0 0 24px; }
+  .badge {
+    display: inline-block; font-size: 12px; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; margin-bottom: 16px;
+  }
+  .buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+  .btn {
+    display: inline-block; padding: 10px 16px; border-radius: 8px; font-weight: 500; font-size: 15px;
+    border: 1px solid var(--border); color: var(--text); background: var(--surface);
+  }
+  .btn.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .btn:hover { text-decoration: none; border-color: var(--muted); }
+
+  .phone {
+    aspect-ratio: 9 / 19.5; width: 100%;
+    border: 1px solid var(--border); border-radius: 28px; background: var(--surface);
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    color: var(--muted); font-size: 13px; padding: 16px;
+  }
+
+  main section { border-top: 1px solid var(--border); padding: 40px 0; }
+  h2 { font-size: 24px; margin: 0 0 14px; letter-spacing: -0.01em; }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  code { font-family: var(--mono); font-size: 0.9em; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  pre {
+    font-family: var(--mono); font-size: 13px; line-height: 1.5;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; margin: 0 0 14px;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 14px; font-size: 15px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+  .note {
+    border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    background: var(--surface); border-radius: 6px; padding: 12px 14px; margin: 0 0 14px; font-size: 15px;
+  }
+  .muted { color: var(--muted); }
+
+  footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(--muted); font-size: 14px; }
+  footer p { margin: 0 0 8px; }
+
+  @media (max-width: 640px) {
+    .hero { grid-template-columns: 1fr; padding: 40px 0 32px; gap: 28px; }
+    .hero h1 { font-size: 34px; }
+    .phone { max-width: 180px; }
+    nav a.optional { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./">AndroiOS</a>
+    <nav>
+      <a class="optional" href="#how-it-works">How it works</a>
+      <a class="optional" href="#install">Install</a>
+      <a href="https://github.com/alolaxd/AndroiOS">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="hero">
+    <div>
+      <span class="badge">v0.1.0-alpha · open source</span>
+      <h1>AndroiOS</h1>
+      <p class="lede">Run Android (LineageOS 23.2 / Android 16) on iPhone and iPad: an AArch64 virtual machine via QEMU, with Android's graphics on the Apple GPU through Metal.</p>
+      <div class="buttons">
+        <a class="btn primary" href="https://github.com/alolaxd/AndroiOS">View on GitHub</a>
+        <a class="btn" href="https://github.com/alolaxd/AndroiOS/releases">Download IPA</a>
+      </div>
+    </div>
+    <div class="phone" role="img" aria-label="Screenshot placeholder">Screenshot<br>coming soon</div>
+  </div>
+</div>
+
+<main class="wrap">
+
+  <section id="can-you-run-android-on-iphone">
+    <h2>Can you run Android on an iPhone?</h2>
+    <p>Not natively, and not through the App Store. iOS doesn't let apps use the CPU's virtualization hardware, so an iPhone can't run Android the way a Mac runs a virtual machine. What does work is <strong>emulation</strong>: every Android instruction is translated on the fly by QEMU's just-in-time compiler.</p>
+    <p>AndroiOS does this as a sideloaded app. It boots LineageOS 23.2 (Android 16) inside the app process and renders Android's graphics on the Apple GPU. It needs two things a normal app doesn't get:</p>
+    <ul>
+      <li><strong>JIT</strong>, enabled by attaching a debugger with StikDebug;</li>
+      <li><strong>more memory</strong>, through the <code>increased-memory-limit</code> and <code>extended-virtual-addressing</code> entitlements (GetMoreRAM, TrollStore or a paid developer profile).</li>
+    </ul>
+    <div class="note"><strong>Status:</strong> early alpha. LineageOS boots, renders with readable text, and responds to touch and audio in a test harness that runs the same engine code on a Mac. On real devices the app does not work yet. Known issues: a dark screen when launched with JIT, and a "file can't be opened" error when installing with SideStore.</div>
+  </section>
+
+  <section id="how-it-works">
+    <h2>How does AndroiOS work?</h2>
+    <p>AndroiOS is a SwiftUI app that embeds QEMU as a framework and runs the virtual machine on background threads inside the app. The guest is the prebuilt <a href="https://github.com/jqssun/android-lineage-qemu">LineageOS <code>virtio_arm64only</code></a> VM, which boots through UEFI and GRUB.</p>
+    <ul>
+      <li><strong>CPU:</strong> QEMU's TCG JIT translates ARM64 guest code into ARM64 host code. Executable memory follows iOS's W^X rules through split read-write and read-execute mappings.</li>
+      <li><strong>GPU:</strong> Android's OpenGL ES calls are translated to Metal and run on the Apple GPU:</li>
+    </ul>
+<pre>Android (GLES) → Mesa virgl → virtio-gpu → QEMU
+  → virglrenderer → libepoxy → ANGLE (GLES on Metal) → Apple GPU
+  → IOSurface → MTKView</pre>
+    <p>The GPU components are the ones <a href="https://github.com/utmapp/UTM">UTM</a> ships on iOS: UTM's virglrenderer and libepoxy, and WebKit's ANGLE, all at UTM's pinned versions.</p>
+    <ul>
+      <li><strong>Input:</strong> touches go to a USB tablet device that Android converts to touch; a virtual keyboard is also supported.</li>
+      <li><strong>Audio:</strong> the guest's sound card feeds PCM to AVAudioEngine.</li>
+      <li><strong>Network:</strong> user-mode NAT (libslirp), with no special permissions.</li>
+    </ul>
+  </section>
+
+  <section id="performance">
+    <h2>What performance can I expect?</h2>
+    <p>Graphics are fast; CPU-bound work is slow. These numbers come from a Mac test harness running the iOS engine code, on an Apple A18 Pro GPU (the iPhone 16 Pro chip), not from a phone.</p>
+    <table>
+      <tr><th>Workload</th><th>Result</th></tr>
+      <tr><td>LineageOS 23.2 boot animation</td><td>40–50 FPS</td></tr>
+      <tr><td>Boot to setup wizard</td><td>~3 min (later boots), ~5 min (first boot)</td></tr>
+      <tr><td>glmark2 GPU benchmark</td><td>score 103 (67–131 FPS per scene)</td></tr>
+      <tr><td>Android UI (apps, scrolling)</td><td>well below 60 FPS: limited by CPU emulation</td></tr>
+    </table>
+    <p>Expect slower results on phones (thermal throttling) and on older chips. Devices with 8 GB of RAM or M-series iPads are the realistic targets; 4 GB devices are very tight for Android 16.</p>
+  </section>
+
+  <section id="install">
+    <h2>How to install AndroiOS</h2>
+    <ol>
+      <li>Download from <a href="https://github.com/alolaxd/AndroiOS/releases">GitHub Releases</a>: <code>AndroiOS-LineageOS.ipa</code> (~1 GB, Android included) or <code>AndroiOS.ipa</code> (10 MB, app only).</li>
+      <li>Sideload it with AltStore, SideStore, TrollStore or Xcode.</li>
+      <li>Apply the memory entitlements with GetMoreRAM, TrollStore, or a paid developer profile.</li>
+      <li>Open StikDebug and enable JIT for AndroiOS.</li>
+      <li>In AndroiOS's setup wizard, tap <strong>Use built-in LineageOS 23.2</strong>, then boot the VM. The first boot takes several minutes.</li>
+    </ol>
+    <p class="muted">To build from source: clone the repository, then run <code>Scripts/build-all.sh</code> on a Mac with Xcode. See <a href="https://github.com/alolaxd/AndroiOS/blob/main/docs/BUILDING.md">docs/BUILDING.md</a>.</p>
+  </section>
+
+  <section id="androios-vs-utm">
+    <h2>AndroiOS vs UTM</h2>
+    <p><a href="https://github.com/utmapp/UTM">UTM</a> is a mature, general-purpose virtual machine app for iOS and macOS. It runs many operating systems and supports configurations of every kind. AndroiOS is a small app focused only on Android, built on the same approach.</p>
+    <table>
+      <tr><th></th><th>UTM</th><th>AndroiOS</th></tr>
+      <tr><td>Scope</td><td>Any OS, fully configurable</td><td>Android only, preconfigured</td></tr>
+      <tr><td>GPU stack</td><td>virglrenderer, libepoxy, WebKit ANGLE</td><td>The same components, at UTM's versions</td></tr>
+      <tr><td>Android setup</td><td>Import a LineageOS VM yourself</td><td>LineageOS 23.2 bundled; one-tap setup</td></tr>
+      <tr><td>Maturity</td><td>Widely used, stable releases</td><td>Early alpha, not yet working on devices</td></tr>
+    </table>
+    <p>If you need Android on iOS today, UTM with the LineageOS UTM VM is the more proven route. AndroiOS aims to make that experience simpler and Android-specific.</p>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>AndroiOS's own code is released under the <a href="https://github.com/alolaxd/AndroiOS/blob/main/LICENSE">MIT License</a>. Its QEMU patches are GPL-2.0-or-later; virglrenderer and libepoxy are MIT, ANGLE is BSD-3-Clause, and LineageOS is under its own licenses.</p>
+    <p>Built by <a href="https://github.com/alolaxd">alolaxd</a>, with code written by Claude. GPU components from <a href="https://github.com/utmapp/UTM">UTM</a>; LineageOS VM by <a href="https://github.com/jqssun/android-lineage-qemu">jqssun</a>.</p>
+    <p><a href="https://github.com/alolaxd/AndroiOS">github.com/alolaxd/AndroiOS</a></p>
+  </div>
+</footer>
+
+</body>
+</html>
