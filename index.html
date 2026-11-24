@@ -13,7 +13,12 @@
 <meta property="og:description" content="An open-source iOS app that boots LineageOS 23.2 (Android 16) in a QEMU virtual machine, with Android's graphics rendered on the Apple GPU through Metal.">
 <meta property="og:url" content="https://alolaxd.github.io/AndroiOS/">
 <meta property="og:site_name" content="AndroiOS">
+<meta property="og:image" content="https://alolaxd.github.io/AndroiOS/images/screenshot.jpg">
+<meta property="og:image:width" content="750">
+<meta property="og:image:height" content="1424">
+<meta property="og:image:alt" content="AndroiOS New VM setup screen on iPhone">
 <meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://alolaxd.github.io/AndroiOS/images/screenshot.jpg">
 <meta name="twitter:title" content="AndroiOS – Run Android on iPhone and iPad">
 <meta name="twitter:description" content="LineageOS 23.2 (Android 16) in a QEMU VM on iOS, with Metal GPU acceleration. Open source, early alpha.">
 
@@ -27,6 +32,7 @@
   "operatingSystem": "iOS, iPadOS",
   "softwareVersion": "0.1.0-alpha",
   "url": "https://alolaxd.github.io/AndroiOS/",
+  "screenshot": "https://alolaxd.github.io/AndroiOS/images/screenshot.jpg",
   "downloadUrl": "https://github.com/alolaxd/AndroiOS/releases",
   "license": "https://github.com/alolaxd/AndroiOS/blob/main/LICENSE",
   "isAccessibleForFree": true,
@@ -102,10 +108,8 @@
   .btn:hover { text-decoration: none; border-color: var(--muted); }
 
   .phone {
-    aspect-ratio: 9 / 19.5; width: 100%;
+    aspect-ratio: 750 / 1424; width: 100%; height: auto; display: block; object-fit: cover;
     border: 1px solid var(--border); border-radius: 28px; background: var(--surface);
-    display: flex; align-items: center; justify-content: center; text-align: center;
-    color: var(--muted); font-size: 13px; padding: 16px;
   }
 
   main section { border-top: 1px solid var(--border); padding: 40px 0; }
@@ -163,7 +167,7 @@
         <a class="btn" href="https://github.com/alolaxd/AndroiOS/releases">Download IPA</a>
       </div>
     </div>
-    <div class="phone" role="img" aria-label="Screenshot placeholder">Screenshot<br>coming soon</div>
+    <img class="phone" src="images/screenshot.jpg" width="750" height="1424" alt="AndroiOS on iPhone: the New VM setup screen listing the device model, memory, CPU cores and free storage, and the tools you need: StikDebug and GetMoreRAM.">
   </div>
 </div>
 
