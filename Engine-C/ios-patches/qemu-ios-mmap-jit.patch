@@ -19,10 +19,82 @@ index fdff07f..9c3939d 100644
  {
      pthread_jit_write_protect_np(true);
 diff --git a/tcg/region.c b/tcg/region.c
-index 478ec05..c8259a6 100644
+index 478ec05..8f0bd7c 100644
 --- a/tcg/region.c
 +++ b/tcg/region.c
-@@ -687,6 +687,13 @@ static int alloc_code_gen_buffer(size_t size, int splitwx, Error **errp)
+@@ -668,9 +668,71 @@ static int alloc_code_gen_buffer_splitwx_vmremap(size_t size, Error **errp)
+ #endif /* CONFIG_DARWIN */
+ #endif /* CONFIG_TCG_INTERPRETER */
+ 
++#if defined(CONFIG_DARWIN) && TARGET_OS_IPHONE
++#include "qemu-ios-api.h"
++
++/*
++ * iOS 26+: executable pages must start out RX (no MAP_JIT, no RW->RX flip).
++ * On TXM devices the attached debugger (StikDebug universal.js) prepares the
++ * region; then we make an RW alias for TCG to write through and detach the
++ * debugger, so QEMU's frequent signals no longer stop the process.
++ * See util/ios-jit.c.
++ */
++static int alloc_code_gen_buffer_splitwx_ios26(size_t size, Error **errp)
++{
++    char msg[160];
++    void *rx = mmap(NULL, size, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, -1, 0);
++
++    if (rx == MAP_FAILED) {
++        error_setg_errno(errp, errno, "allocate %zu bytes for RX jit buffer", size);
++        return -1;
++    }
++    bool txm = qemu_ios_jit_device_has_txm();
++    if (txm && !qemu_ios_jit_prepare_region(rx, size)) {
++        munmap(rx, size);
++        error_setg(errp, "the debugger did not prepare the JIT region: "
++                   "enable JIT with StikDebug using the universal.js script");
++        return -1;
++    }
++
++    vm_address_t rw = 0;
++    vm_prot_t cur = 0, max = 0;
++    kern_return_t kr = vm_remap(mach_task_self(), &rw, size, 0, VM_FLAGS_ANYWHERE,
++                                mach_task_self(), (vm_address_t)rx, false,
++                                &cur, &max, VM_INHERIT_NONE);
++    if (kr != KERN_SUCCESS || mprotect((void *)rw, size, PROT_READ | PROT_WRITE) != 0) {
++        if (kr == KERN_SUCCESS) {
++            vm_deallocate(mach_task_self(), rw, size);
++        }
++        munmap(rx, size);
++        error_setg(errp, "could not create the RW alias of the JIT region (kr=%d)", kr);
++        return -1;
++    }
++
++    region.start_aligned = (void *)rw;
++    region.total_size = size;
++    tcg_splitwx_diff = (uintptr_t)rx - (uintptr_t)rw;
++
++    snprintf(msg, sizeof(msg), "code_gen_buffer %zu MB: rx=%p rw=%p (txm=%d)",
++             size >> 20, rx, (void *)rw, txm);
++    qemu_ios_jit_log(msg);
++    if (txm) {
++        qemu_ios_jit_detach();
++    }
++    return PROT_READ | PROT_WRITE;
++}
++#endif
++
+ static int alloc_code_gen_buffer_splitwx(size_t size, Error **errp)
+ {
+ #ifndef CONFIG_TCG_INTERPRETER
++# if defined(CONFIG_DARWIN) && TARGET_OS_IPHONE
++    if (qemu_ios_jit_is_ios26()) {
++        return alloc_code_gen_buffer_splitwx_ios26(size, errp);
++    }
++    /* Before iOS 26, CS_DEBUGGED alone allows an RW buffer with an RX alias. */
++    qemu_ios_jit_log("code_gen_buffer: pre-iOS 26 split-wx (RW + RX alias)");
++# endif
+ # ifdef CONFIG_DARWIN
+     return alloc_code_gen_buffer_splitwx_vmremap(size, errp);
+ # endif
+@@ -687,6 +749,13 @@ static int alloc_code_gen_buffer(size_t size, int splitwx, Error **errp)
      ERRP_GUARD();
      int prot, flags;
  
@@ -36,3 +108,239 @@ index 478ec05..c8259a6 100644
      if (splitwx) {
          prot = alloc_code_gen_buffer_splitwx(size, errp);
          if (prot >= 0) {
+@@ -710,8 +779,9 @@ static int alloc_code_gen_buffer(size_t size, int splitwx, Error **errp)
+      */
+     prot = PROT_NONE;
+     flags = MAP_PRIVATE | MAP_ANONYMOUS;
+-#ifdef CONFIG_DARWIN
+-    /* Applicable to both iOS and macOS (Apple Silicon). */
++#if defined(CONFIG_DARWIN) && !TARGET_OS_IPHONE
++    /* macOS (Apple Silicon): single MAP_JIT mapping toggled per thread.
++     * Never on iOS, where split-wx is forced above. */
+     if (!splitwx) {
+         flags |= MAP_JIT;
+     }
+diff --git a/util/ios-jit.c b/util/ios-jit.c
+new file mode 100644
+index 0000000..3b8e1b5
+--- /dev/null
++++ b/util/ios-jit.c
+@@ -0,0 +1,207 @@
++/*
++ * JIT on iOS (AndroiOS): debugger-attached JIT, iOS 26+ TXM aware.
++ *
++ * iOS lets a process create executable pages only while a debugger is (or
++ * was) attached (CS_DEBUGGED). On iOS 26+ devices with the Trusted Execution
++ * Monitor (TXM: A15 and later), that is not enough: the debugger must also
++ * "prepare" each executable region. StikDebug's universal.js implements this
++ * as a breakpoint protocol:
++ *
++ *   x16 = 1 (PREPARE_REGION), x0 = addr (or 0), x1 = len; brk #0xf00d
++ *       -> debugger prepares [addr, addr+len) as RX, returns addr in x0
++ *   x16 = 0 (DETACH); brk #0xf00d
++ *       -> debugger detaches
++ *
++ * (The older "brk #0x69" handshake is rejected by current universal.js.)
++ * The same flow is used by RetroArch's pkg/apple/JITSupport.m.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++#include "qemu/osdep.h"
++#include "qemu-ios-api.h"
++
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
++
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++#include <os/log.h>
++#include <signal.h>
++#include <dirent.h>
++
++extern int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
++#define CS_OPS_STATUS 0
++#define CS_DEBUGGED   0x10000000
++
++static os_log_t jit_log(void)
++{
++    static os_log_t log;
++    if (!log) {
++        log = os_log_create("com.androios.qemu", "jit");
++    }
++    return log;
++}
++
++int qemu_ios_jit_debugged(void)
++{
++    uint32_t flags = 0;
++    return csops(getpid(), CS_OPS_STATUS, &flags, sizeof(flags)) == 0 &&
++           (flags & CS_DEBUGGED) != 0;
++}
++
++int qemu_ios_jit_is_ios26(void)
++{
++    if (__builtin_available(iOS 26.0, *)) {
++        return 1;
++    }
++    return 0;
++}
++
++/* Look for <preboot>/<boot-uuid>/usr/standalone/firmware/FUD/Ap,TrustedExecutionMonitor.img4
++ * (96-character boot-manifest directory names), as RetroArch does. */
++static int find_txm_firmware(const char *base, int *checked)
++{
++    DIR *d = opendir(base);
++    struct dirent *e;
++    int found = 0;
++
++    if (!d) {
++        return 0;
++    }
++    while (!found && (e = readdir(d)) != NULL) {
++        if (strlen(e->d_name) == 96) {
++            char path[1024];
++            snprintf(path, sizeof(path),
++                     "%s/%s/usr/standalone/firmware/FUD/Ap,TrustedExecutionMonitor.img4",
++                     base, e->d_name);
++            *checked = 1;
++            found = access(path, F_OK) == 0;
++        }
++    }
++    closedir(d);
++    return found;
++}
++
++int qemu_ios_jit_device_has_txm(void)
++{
++    static int has_txm = -1;
++
++    if (has_txm >= 0) {
++        return has_txm;
++    }
++    has_txm = 0;
++    if (!qemu_ios_jit_is_ios26()) {
++        return has_txm;     /* only iOS 26+ enforces TXM for JIT */
++    }
++
++    int checked = 0;
++    DIR *d = opendir("/System/Volumes/Preboot");
++    struct dirent *e;
++    while (d && !has_txm && (e = readdir(d)) != NULL) {
++        if (strlen(e->d_name) == 36) {      /* <boot UUID> */
++            char boot[512];
++            snprintf(boot, sizeof(boot), "/System/Volumes/Preboot/%s/boot", e->d_name);
++            has_txm = find_txm_firmware(boot, &checked);
++            break;
++        }
++    }
++    if (d) {
++        closedir(d);
++    }
++    if (!has_txm) {
++        has_txm = find_txm_firmware("/private/preboot", &checked);
++    }
++    if (!has_txm && !checked) {
++        /* Could not inspect preboot: assume TXM. Preparing a region that did
++         * not need it only costs time; skipping one that did gets us killed. */
++        has_txm = 1;
++    }
++    os_log(jit_log(), "TXM: %{public}s%{public}s", has_txm ? "yes" : "no",
++           checked ? "" : " (assumed: preboot unreadable)");
++    return has_txm;
++}
++
++/* A brk with no debugger to handle it raises SIGTRAP; catch it so the
++ * missing-debugger case is an error instead of a crash. */
++static volatile sig_atomic_t brk_trapped;
++
++static void brk_trap_handler(int sig, siginfo_t *info, void *ctx)
++{
++    brk_trapped = 1;
++    ((ucontext_t *)ctx)->uc_mcontext->__ss.__pc += 4;   /* skip the brk */
++}
++
++static void brk_guard_begin(struct sigaction *prev)
++{
++    struct sigaction act = { 0 };
++
++    act.sa_sigaction = brk_trap_handler;
++    act.sa_flags = SA_SIGINFO;
++    sigemptyset(&act.sa_mask);
++    sigaction(SIGTRAP, &act, prev);
++    brk_trapped = 0;
++}
++
++static void brk_guard_end(struct sigaction *prev)
++{
++    sigaction(SIGTRAP, prev, NULL);
++}
++
++int qemu_ios_jit_prepare_region(void *rx, size_t size)
++{
++    struct sigaction prev;
++    register void *x0 __asm__("x0") = rx;
++    register size_t x1 __asm__("x1") = size;
++
++    brk_guard_begin(&prev);
++    __asm__ volatile("mov x16, #1\n"
++                     "brk #0xf00d\n"
++                     : "+r"(x0)
++                     : "r"(x1)
++                     : "x16", "memory");
++    brk_guard_end(&prev);
++
++    int ok = !brk_trapped && x0 == rx;
++    os_log(jit_log(), "prepare region %p+%zu MB: %{public}s", rx, size >> 20,
++           ok ? "ok" : (brk_trapped ? "no debugger handled brk #0xf00d (StikDebug script must be universal.js)"
++                                    : "debugger returned a different address"));
++    return ok;
++}
++
++void qemu_ios_jit_detach(void)
++{
++    struct sigaction prev;
++
++    brk_guard_begin(&prev);
++    __asm__ volatile("mov x16, #0\n"
++                     "brk #0xf00d\n" ::: "x16", "memory");
++    brk_guard_end(&prev);
++    os_log(jit_log(), "detach request: %{public}s",
++           brk_trapped ? "no debugger attached" : "sent");
++}
++
++void qemu_ios_jit_log(const char *msg)
++{
++    os_log(jit_log(), "%{public}s", msg);
++}
++
++void qemu_ios_log(const char *msg)
++{
++    static os_log_t log;
++    if (!log) {
++        log = os_log_create("com.androios.qemu", "qemu");
++    }
++    os_log(log, "%{public}s", msg);
++}
++
++#else /* not iOS: the macOS test harness */
++
++int qemu_ios_jit_debugged(void) { return 1; }
++int qemu_ios_jit_is_ios26(void) { return 0; }
++int qemu_ios_jit_device_has_txm(void) { return 0; }
++int qemu_ios_jit_prepare_region(void *rx, size_t size) { return 1; }
++void qemu_ios_jit_detach(void) { }
++void qemu_ios_jit_log(const char *msg) { }
++void qemu_ios_log(const char *msg) { }
++
++#endif
+diff --git a/util/meson.build b/util/meson.build
+index 5d8bef9..5ded798 100644
+--- a/util/meson.build
++++ b/util/meson.build
+@@ -1,3 +1,6 @@
++if get_option('ios_library')
++  util_ss.add(files('ios-jit.c'))
++endif
+ util_ss.add(files('osdep.c', 'cutils.c', 'unicode.c', 'qemu-timer-common.c'))
+ util_ss.add(files('thread-context.c'), numa)
+ if not config_host_data.get('CONFIG_ATOMIC64')

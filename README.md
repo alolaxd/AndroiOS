@@ -27,10 +27,27 @@ UTM/QEMU: UEFI → GRUB → Android, Mesa virgl, drm_hwcomposer.
 - Boot animation at 40–50 FPS; GPU benchmark (glmark2) 103–130 FPS
 
 ## Known Issues
-- App crashes when ran with JIT – just a dark screen
-  **Possible Fix**: Base AndroiOS JIT around universal.js script
-- SideStore installation: "The file can't be opened"
-   **Possible Fix**: rebuild ipa around sidesign
+- **Dark screen / crash at launch with JIT (iOS 26+, A15 and later). Fixed in v0.2.0-alpha, awaiting on-device confirmation.**
+  Cause: the startup JIT check executed a page the debugger had never prepared, which TXM kills.
+  AndroiOS now follows StikDebug's `universal.js` protocol (`brk #0xf00d`, see "JIT on iOS 26+"
+  below) and never executes code to probe. Use StikDebug's **universal.js** script.
+- **SideStore: "The file can't be opened". Fixed in v0.2.0-alpha.** SideStore's re-signer runs out
+  of memory on large IPAs ([SideStore#1509](https://github.com/SideStore/SideStore/issues/1509)), and
+  the 1 GB IPA had a 2.2 GB disk inside. Install the 10 MB `AndroiOS.ipa`; the setup wizard
+  downloads LineageOS 23.2 (~1.2 GB) into the app instead.
+
+## JIT on iOS 26+
+On iOS 26 and later, devices with the Trusted Execution Monitor (TXM, A15 and newer) only run code
+in regions the attached debugger has prepared. AndroiOS:
+1. maps QEMU's 256 MB code buffer read+execute (no `MAP_JIT`, no RW→RX flip);
+2. asks StikDebug to prepare it: `x0` = address, `x1` = size, `x16` = 1, `brk #0xf00d`
+   (a SIGTRAP handler turns a missing debugger into an error message, not a crash);
+3. creates a read-write alias with `vm_remap` for QEMU's split-W^X (`tcg_splitwx_diff`);
+4. detaches the debugger (`x16` = 0, `brk #0xf00d`) so QEMU's signals no longer stop the process.
+
+The legacy `brk #0x69` handshake is not used; current `universal.js` rejects it. Devices without
+TXM, and iOS versions before 26, only need the debugger-attached flag (`CS_DEBUGGED`). Progress is
+logged to Console.app under the subsystems `com.androios.engine` and `com.androios.qemu`.
 
 The iOS app builds for device and simulator. It **has not yet run on a real iPhone.**
 
@@ -40,15 +57,15 @@ git clone --recursive <this repo> && cd AndroiOS
 Scripts/build-all.sh          # WebKit ANGLE + engine + app → build/AndroiOS.ipa
 Guest/fetch-lineage.sh        # LineageOS 23.2 VM (verified attestation) → Guest/build/lineage/
 ```
-Easiest: `Scripts/build-ipa.sh --with-guest` produces `build/AndroiOS-LineageOS.ipa` (~1 GB)
-with LineageOS 23.2 inside. On first launch, the setup wizard's **Use built-in LineageOS 23.2**
-copies the disks into the app's storage and creates the VM.
-
 On the device:
-1. Sideload `AndroiOS-LineageOS.ipa`, or `AndroiOS.ipa` (10 MB) and copy `efi_vars.fd`,
-   `vda.qcow2` and `vdb.qcow2` into AndroiOS's Documents yourself.
+1. Sideload `AndroiOS.ipa` (10 MB) from the [releases](https://github.com/alolaxd/AndroiOS/releases).
 2. Apply the memory entitlements with GetMoreRAM, TrollStore, or a paid developer profile.
-3. Enable JIT with StikDebug, then boot.
+   Without them, AndroiOS lowers guest RAM to what iOS allows the app instead of being killed.
+3. Enable JIT with StikDebug using the **universal.js** script.
+4. In the setup wizard, download LineageOS 23.2 (~1.2 GB), then boot.
+
+`Scripts/build-ipa.sh --with-guest` can still bundle the disks into a ~1 GB IPA for Xcode or
+TrollStore installs; SideStore cannot sign IPAs that large.
 
 ## Layout
 | Path | What |

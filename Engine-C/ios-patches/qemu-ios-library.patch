@@ -1,9 +1,9 @@
 diff --git a/include/qemu-ios-api.h b/include/qemu-ios-api.h
 new file mode 100644
-index 0000000..9a32d4f
+index 0000000..f42d4e4
 --- /dev/null
 +++ b/include/qemu-ios-api.h
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,77 @@
 +/*
 + * Entry points exported by QEMU.framework (see qemu/system/ios-main.c).
 + * Consumed by the AndroiOS engine layer; not part of upstream QEMU.
@@ -12,6 +12,7 @@ index 0000000..9a32d4f
 +#define QEMU_IOS_API_H
 +
 +#include <stdint.h>
++#include <stddef.h>
 +
 +#ifdef __cplusplus
 +extern "C" {
@@ -59,6 +60,17 @@ index 0000000..9a32d4f
 +typedef void (*qemu_ios_audio_callback)(const int16_t *frames, int frame_count,
 +                                        int sample_rate, int channels, void *ctx);
 +QEMU_IOS_EXPORT void qemu_ios_audio_set_callback(qemu_ios_audio_callback cb, void *ctx);
++
++/* ---- JIT (util/ios-jit.c) -------------------------------------------------
++ * iOS 26+ on TXM devices (A15+) requires the attached debugger to prepare
++ * executable regions (StikDebug universal.js: brk #0xf00d, x16 = command). */
++QEMU_IOS_EXPORT int qemu_ios_jit_debugged(void);         /* CS_DEBUGGED set */
++QEMU_IOS_EXPORT int qemu_ios_jit_is_ios26(void);
++QEMU_IOS_EXPORT int qemu_ios_jit_device_has_txm(void);   /* iOS 26+ with TXM */
++QEMU_IOS_EXPORT int qemu_ios_jit_prepare_region(void *rx, size_t size);
++QEMU_IOS_EXPORT void qemu_ios_jit_detach(void);
++QEMU_IOS_EXPORT void qemu_ios_jit_log(const char *msg);  /* os_log, subsystem com.androios.qemu */
++QEMU_IOS_EXPORT void qemu_ios_log(const char *msg);      /* os_log, category "qemu" */
 +
 +/* ---- internal: implemented in ui/ios.c, BQL must be held --------------- */
 +void qemu_ios_input_touch(int slot, int tracking_id, int x, int y, int w, int h, int action);

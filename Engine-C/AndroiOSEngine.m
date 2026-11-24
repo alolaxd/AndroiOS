@@ -6,7 +6,6 @@
 #include <pthread.h>
 #include <sys/mman.h>
 #include <mach/mach.h>
-#include <libkern/OSCacheControl.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/resource.h>
@@ -18,51 +17,104 @@
 
 #define CONSOLE_ID "aios-con0"
 
+/* ------------------------------------------------------------------- logging */
+
+#include <os/log.h>
+#if TARGET_OS_IPHONE
+#include <os/proc.h>
+#endif
+
+static os_log_t engine_log(void) {
+    static os_log_t log;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ log = os_log_create("com.androios.engine", "engine"); });
+    return log;
+}
+#define ELOG(fmt, ...) os_log(engine_log(), fmt, ##__VA_ARGS__)
+
 /* ---------------------------------------------------------------- JIT probe */
 
-/* Private but stable syscall; UTM and other JIT apps use it the same way. */
-extern int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
-#define CS_OPS_STATUS 0
-#define CS_DEBUGGED   0x10000000
-
-extern kern_return_t mach_vm_remap(vm_map_t, mach_vm_address_t *, mach_vm_size_t,
-                                   mach_vm_offset_t, int, vm_map_t, mach_vm_address_t,
-                                   boolean_t, vm_prot_t *, vm_prot_t *, vm_inherit_t);
-
-static bool process_is_debugged(void) {
-    uint32_t flags = 0;
-    if (csops(getpid(), CS_OPS_STATUS, &flags, sizeof(flags)) != 0) return false;
-    return (flags & CS_DEBUGGED) != 0;
-}
-
+/*
+ * Never executes anything. (The old probe executed a freshly mapped page:
+ * on iOS 26+ TXM devices that page was never prepared by the debugger, so the
+ * app was killed at launch whenever JIT was enabled.)
+ *
+ *  - no CS_DEBUGGED                → JIT not enabled
+ *  - iOS 26+ with TXM (A15+)       → test-prepare one RX page through the
+ *                                    universal.js handshake (brk #0xf00d, x16=1);
+ *                                    fails if StikDebug used another script
+ *  - iOS < 26, or no TXM           → CS_DEBUGGED is all TCG needs
+ *
+ * QEMU itself prepares its code buffer and then detaches the debugger, after
+ * which CS_DEBUGGED stays set but no debugger answers; a successful result is
+ * therefore cached rather than re-tested.
+ */
 aios_jit_status_t aios_jit_probe(void) {
 #if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
-    /* On device, executing an unsigned page without CS_DEBUGGED is a
-     * code-signing kill (SIGKILL, not catchable), so never try blind. */
-    if (!process_is_debugged()) return AIOS_JIT_NOT_EXECUTABLE;
-#endif
-    size_t size = (size_t)getpagesize();
-    void *rw = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-    if (rw == MAP_FAILED) return AIOS_JIT_NO_MAPPING;
+    static aios_jit_status_t cached = AIOS_JIT_NOT_EXECUTABLE;
+    static bool have_cached = false;
+    if (have_cached && cached == AIOS_JIT_AVAILABLE) return cached;
 
-    mach_vm_address_t rx = 0;
-    vm_prot_t cur, max;
-    kern_return_t kr = mach_vm_remap(mach_task_self(), &rx, size, 0, VM_FLAGS_ANYWHERE,
-                                     mach_task_self(), (mach_vm_address_t)rw, false,
-                                     &cur, &max, VM_INHERIT_NONE);
-    if (kr != KERN_SUCCESS) { munmap(rw, size); return AIOS_JIT_NO_MAPPING; }
-    if (mprotect((void *)rx, size, PROT_READ | PROT_EXEC) != 0) {
-        munmap((void *)rx, size); munmap(rw, size);
-        return AIOS_JIT_NOT_EXECUTABLE;
+    aios_jit_status_t st;
+    if (!qemu_ios_jit_debugged()) {
+        st = AIOS_JIT_NOT_EXECUTABLE;
+    } else if (qemu_ios_jit_device_has_txm()) {
+        size_t size = (size_t)getpagesize();
+        void *rx = mmap(NULL, size, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (rx == MAP_FAILED) {
+            st = AIOS_JIT_NO_MAPPING;
+        } else {
+            st = qemu_ios_jit_prepare_region(rx, size) ? AIOS_JIT_AVAILABLE : AIOS_JIT_NEEDS_UNIVERSAL_SCRIPT;
+            munmap(rx, size);
+        }
+    } else {
+        st = AIOS_JIT_AVAILABLE;
     }
-    /* mov w0, #42 ; ret */
-    static const uint32_t code[] = { 0x52800540, 0xd65f03c0 };
-    memcpy(rw, code, sizeof(code));
-    sys_icache_invalidate((void *)rx, sizeof(code));
-    int (*fn)(void) = (int (*)(void))(uintptr_t)rx;
-    int r = fn();
-    munmap((void *)rx, size); munmap(rw, size);
-    return r == 42 ? AIOS_JIT_AVAILABLE : AIOS_JIT_NOT_EXECUTABLE;
+    ELOG("JIT probe: %{public}s (debugged=%d ios26=%d txm=%d)",
+         st == AIOS_JIT_AVAILABLE ? "available" :
+         st == AIOS_JIT_NEEDS_UNIVERSAL_SCRIPT ? "debugger did not answer brk #0xf00d (needs universal.js)" :
+         st == AIOS_JIT_NO_MAPPING ? "mmap failed" : "not enabled",
+         qemu_ios_jit_debugged(), qemu_ios_jit_is_ios26(),
+         qemu_ios_jit_debugged() ? qemu_ios_jit_device_has_txm() : -1);
+    cached = st; have_cached = true;
+    return st;
+#else
+    return AIOS_JIT_AVAILABLE;   /* simulator / macOS harness: no restrictions */
+#endif
+}
+
+/* -------------------------------------------------------------- memory budget */
+
+/*
+ * Guest RAM is mapped up front and faulted in as the guest touches it, so a
+ * guest larger than what iOS lets this process use runs for a while and then
+ * gets the app silently jetsam-killed. Without the increased-memory-limit /
+ * extended-virtual-addressing entitlements that limit is low, so clamp:
+ *   1. to os_proc_available_memory() minus our own overhead
+ *      (256 MB TCG code buffer + ~512 MB QEMU, virgl, ANGLE, UI), and
+ *   2. to what the address space can actually reserve.
+ */
+static long guest_ram_budget_mb(long requested_mb) {
+#if TARGET_OS_IPHONE
+    long ram = requested_mb;
+    const uint64_t overhead = (uint64_t)(256 + 512) << 20;
+    uint64_t avail = os_proc_available_memory();
+    if (avail > overhead && ((uint64_t)ram << 20) + overhead > avail) {
+        long fit = (long)((avail - overhead) >> 20) & ~255L;
+        ram = fit < 1024 ? 1024 : fit;
+    }
+    while (ram > 1024) {
+        void *p = mmap(NULL, (size_t)ram << 20, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (p != MAP_FAILED) { munmap(p, (size_t)ram << 20); break; }
+        ram -= 512;
+    }
+    ELOG("memory: requested %ld MB, available to process %llu MB, guest gets %ld MB%{public}s",
+         requested_mb, avail >> 20, ram,
+         ram < requested_mb ? " (clamped: memory entitlements probably not active)" : "");
+    return ram;
+#else
+    return requested_mb;
+#endif
 }
 
 /* ------------------------------------------------------------------ VM state */
@@ -75,6 +127,7 @@ static struct {
     aios_callbacks_t cb;
     _Atomic bool qemu_done;
     int disp_w, disp_h;
+    long ram_mb;          /* after the memory-budget clamp */
     /* touch: per-slot tracking ids, -1 = up */
     int tracking[10];
     int next_tracking_id;
@@ -94,7 +147,8 @@ static NSString *fmt(NSString *f, ...) {
 
 static NSArray<NSString *> *build_argv(NSDictionary *cfg) {
     NSMutableArray *a = [NSMutableArray arrayWithObject:@"qemu-system-aarch64"];
-    long ram  = [cfg[@"ram_mb"] longValue] ?: 1024;
+    long ram  = guest_ram_budget_mb([cfg[@"ram_mb"] longValue] ?: 1024);
+    vm.ram_mb = ram;
     long cpus = [cfg[@"cpus"] longValue] ?: 1;
     NSString *gpu = cfg[@"gpu"] ?: @"none";
     vm.disp_w = [cfg[@"display_width"] intValue] ?: 1080;
@@ -106,7 +160,7 @@ static NSArray<NSString *> *build_argv(NSDictionary *cfg) {
         @"-M", @"virt,highmem=on,gic-version=3",
         // pauth-impdef: cheap PAC emulation; the architected QARMA is very slow under TCG.
         @"-cpu", @"max,pauth-impdef=on",
-        // split-wx: RW + RX aliases of the code buffer via mach_vm_remap.
+        // split-wx: RX code buffer (debugger-prepared on iOS 26+ TXM devices) + RW alias.
         // This is how TCG JIT works under iOS W^X once a debugger grants CS_DEBUGGED.
         @"-accel", fmt(@"tcg,thread=%@,split-wx=on,tb-size=256", cpus > 1 ? @"multi" : @"single"),
         @"-m", fmt(@"%ld", ram),
@@ -193,6 +247,7 @@ int aios_vm_create(const char *config_json) {
     if (![cfg isKindOfClass:NSDictionary.class]) return -1;
     vm.argv = build_argv(cfg);
     vm.cmdline = strdup([[vm.argv componentsJoinedByString:@" "] UTF8String]);
+    ELOG("VM created: %{public}s", vm.cmdline);
     for (int i = 0; i < 10; i++) vm.tracking[i] = -1;
     vm.created = true;
     vm.state = AIOS_STOPPED;
@@ -200,7 +255,7 @@ int aios_vm_create(const char *config_json) {
 }
 
 static void on_frame(void *surface, int w, int h, uint64_t seq, void *ctx) {
-    atomic_fetch_add(&vm.frames, 1);
+    if (atomic_fetch_add(&vm.frames, 1) == 0) ELOG("first guest frame %dx%d", w, h);
     if (vm.cb.frame) vm.cb.frame((IOSurfaceRef)surface, w, h, seq, vm.cb.ctx);
 }
 
@@ -248,7 +303,9 @@ static void *qemu_thread(void *unused) {
     qemu_ios_display_set_callback(on_frame, NULL);
     qemu_ios_audio_set_callback(on_audio, NULL);
     vm.state = AIOS_RUNNING;
+    ELOG("QEMU thread started (%d args)", argc);
     int status = qemu_ios_main(argc, argv);   /* blocks until the guest powers off */
+    ELOG("QEMU exited with status %d", status);
     vm.qemu_done = true;
     vm.state = status == 0 ? AIOS_STOPPED : AIOS_ERROR;
     if (vm.cb.on_exit) vm.cb.on_exit(status, vm.cb.ctx);
@@ -293,6 +350,7 @@ int aios_vm_pause(int vm_id)  { if (vm.state != AIOS_RUNNING) return -1; qemu_io
 int aios_vm_resume(int vm_id) { if (vm.state != AIOS_PAUSED)  return -1; qemu_ios_resume(); vm.state = AIOS_RUNNING; return 0; }
 int aios_vm_stop(int vm_id)   { if (vm.state != AIOS_RUNNING && vm.state != AIOS_PAUSED) return -1; qemu_ios_request_shutdown(); return 0; }
 aios_state_t aios_vm_get_state(int vm_id) { return vm.state; }
+long aios_vm_guest_ram_mb(int vm_id) { return vm.ram_mb; }
 const char *aios_vm_command_line(int vm_id) { return vm.cmdline ?: ""; }
 
 int aios_vm_save_snapshot(int vm_id, const char *path, char *err, int err_len) {

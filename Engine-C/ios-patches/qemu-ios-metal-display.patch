@@ -1,3 +1,32 @@
+diff --git a/hw/display/virtio-gpu-virgl.c b/hw/display/virtio-gpu-virgl.c
+index 145a0b3..a4b65e2 100644
+--- a/hw/display/virtio-gpu-virgl.c
++++ b/hw/display/virtio-gpu-virgl.c
+@@ -21,6 +21,9 @@
+ #include "hw/virtio/virtio-gpu-pixman.h"
+ 
+ #include "ui/egl-helpers.h"
++#ifdef CONFIG_IOS_DISPLAY
++#include "qemu-ios-api.h"
++#endif
+ 
+ #include <virglrenderer.h>
+ 
+@@ -1115,6 +1118,14 @@ int virtio_gpu_virgl_init(VirtIOGPU *g)
+ #endif
+ 
+     ret = virgl_renderer_init(g, flags, &virtio_gpu_3d_cbs);
++#ifdef CONFIG_IOS_DISPLAY
++    {
++        char msg[96];
++        snprintf(msg, sizeof(msg), "virglrenderer init: %s (flags=0x%x, ret=%d)",
++                 ret == 0 ? "ok" : "FAILED", flags, ret);
++        qemu_ios_log(msg);
++    }
++#endif
+     if (ret != 0) {
+         error_report("virgl could not be initialized: %d", ret);
+         return ret;
 diff --git a/include/ui/egl-helpers.h b/include/ui/egl-helpers.h
 index 4b8c0d2..4b5f725 100644
 --- a/include/ui/egl-helpers.h
@@ -115,10 +144,10 @@ index 81a57fa..89d9a86 100644
          error_setg(errp, "egl: render node init failed");
 diff --git a/ui/ios.c b/ui/ios.c
 new file mode 100644
-index 0000000..a2ba6b3
+index 0000000..3e0a759
 --- /dev/null
 +++ b/ui/ios.c
-@@ -0,0 +1,406 @@
+@@ -0,0 +1,421 @@
 +/*
 + * "ios" display backend (AndroiOS).
 + *
@@ -194,6 +223,12 @@ index 0000000..a2ba6b3
 +{
 +    qemu_ios_frame_callback cb = __atomic_load_n(&frame_cb, __ATOMIC_ACQUIRE);
 +
++    if (frame_seq == 0) {
++        char msg[96];
++        snprintf(msg, sizeof(msg), "display: first frame %dx%d (%s)", d->width, d->height,
++                 d->gl_scanout ? "GL scanout" : "2D");
++        qemu_ios_log(msg);
++    }
 +    frame_seq++;
 +    if (cb && d->surface) {
 +        cb((void *)d->surface, d->width, d->height, frame_seq, frame_ctx);
@@ -438,8 +473,15 @@ index 0000000..a2ba6b3
 +#ifdef CONFIG_OPENGL
 +    if (opts->has_gl && opts->gl != DISPLAY_GL_MODE_OFF) {
 +        /* ANGLE implements GLES only. */
++        qemu_ios_log("display: initializing EGL (ANGLE on Metal)");
 +        egl_init(NULL, DISPLAY_GL_MODE_ES, &error_fatal);
 +        ios_gl_enabled = 1;
++        {
++            char msg[256];
++            snprintf(msg, sizeof(msg), "display: EGL ready, GL_RENDERER=%s",
++                     (const char *)glGetString(GL_RENDERER));
++            qemu_ios_log(msg);
++        }
 +    }
 +#else
 +    if (opts->has_gl && opts->gl != DISPLAY_GL_MODE_OFF) {
@@ -470,6 +512,8 @@ index 0000000..a2ba6b3
 +    }
 +#endif
 +    register_displaychangelistener(&ios_dpy->dcl);
++    qemu_ios_log(ios_gl_enabled ? "display: ios-gl listener registered"
++                                : "display: ios (2D) listener registered");
 +}
 +
 +/* ----------------------------------------------------------- input */

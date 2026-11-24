@@ -104,14 +104,14 @@ struct JITBanner: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("JIT not enabled — performance severely degraded", systemImage: "exclamationmark.triangle.fill")
+            Label(title, systemImage: "exclamationmark.triangle.fill")
                 .font(.headline).foregroundStyle(.orange)
-            Text("QEMU translates the guest's instructions with a JIT, which iOS only allows while a debugger is attached.")
-                .font(.footnote)
+            Text(explanation).font(.footnote)
             VStack(alignment: .leading, spacing: 4) {
                 Text("1. Open **StikDebug** and select AndroiOS.")
-                Text("2. Tap **Enable JIT**. AndroiOS relaunches with JIT.")
-                Text("3. Repeat after every force-quit or reboot.")
+                Text("2. Make sure its JIT script is **universal.js** (needed on iOS 26 and later).")
+                Text("3. Tap **Enable JIT**. AndroiOS relaunches with JIT.")
+                Text("4. Repeat after every force-quit or reboot.")
             }.font(.footnote)
             HStack {
                 Button("Re-check", action: recheck).buttonStyle(.borderedProminent)
@@ -121,10 +121,29 @@ struct JITBanner: View {
             }
             Toggle("I know what I'm doing — allow boot anyway", isOn: $runAnyway).font(.caption)
             if runAnyway {
-                Text("This build has no interpreter fallback: without JIT, QEMU stops at startup (\"mprotect for jit splitwx\").")
+                Text("There is no interpreter fallback: without JIT, QEMU cannot start and the app will close when you boot.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 6)
+    }
+
+    private var title: String {
+        switch status {
+        case .needsUniversalScript: return "JIT script not supported"
+        case .mappingFailed: return "Could not map JIT memory"
+        default: return "JIT not enabled"
+        }
+    }
+
+    private var explanation: String {
+        switch status {
+        case .needsUniversalScript:
+            return "A debugger is attached, but it didn't prepare executable memory. On iOS 26 and later this device needs StikDebug's universal.js script."
+        case .mappingFailed:
+            return "iOS refused to map executable memory. Re-enable JIT in StikDebug and try again."
+        default:
+            return "AndroiOS emulates the guest CPU with a JIT, which iOS only allows while a debugger (StikDebug) is attached."
+        }
     }
 }

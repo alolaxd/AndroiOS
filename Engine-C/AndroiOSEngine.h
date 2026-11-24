@@ -26,14 +26,14 @@ typedef enum {
 } aios_state_t;
 
 typedef enum {
-    AIOS_JIT_AVAILABLE = 0,   /* RX alias of a RW page is executable */
-    AIOS_JIT_NO_MAPPING,      /* mmap/vm_remap failed */
-    AIOS_JIT_NOT_EXECUTABLE,  /* mprotect(RX) refused: no debugger attached */
+    AIOS_JIT_AVAILABLE = 0,           /* debugger attached; on TXM devices it prepares regions */
+    AIOS_JIT_NO_MAPPING,              /* mmap failed */
+    AIOS_JIT_NOT_EXECUTABLE,          /* no debugger attached (CS_DEBUGGED unset) */
+    AIOS_JIT_NEEDS_UNIVERSAL_SCRIPT,  /* iOS 26+ TXM device: debugger did not answer brk #0xf00d */
 } aios_jit_status_t;
 
-/* Probe whether this process may create executable JIT pages, using the same
- * mechanism QEMU's TCG uses on Darwin (split-wx via mach_vm_remap). Never
- * executes anything on a device unless CS_DEBUGGED is set. */
+/* Whether QEMU's JIT can run. Never executes code. On iOS 26+ TXM devices it
+ * test-prepares one page via StikDebug's universal.js handshake. */
 aios_jit_status_t aios_jit_probe(void);
 
 /* ---- callbacks (all invoked on engine threads, never the main thread) ---- */
@@ -77,6 +77,8 @@ int aios_vm_pause(int vm_id);
 int aios_vm_resume(int vm_id);
 int aios_vm_stop(int vm_id);
 aios_state_t aios_vm_get_state(int vm_id);
+/* Guest RAM actually configured (may be lower than requested: see memory budget). */
+long aios_vm_guest_ram_mb(int vm_id);
 
 /* Save full VM state to `path` (pauses the guest). 0 on success. The device
  * set must be migratable: virgl ("gpu":"virgl") is not, so this fails there. */

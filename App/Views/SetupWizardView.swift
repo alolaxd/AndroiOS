@@ -14,7 +14,9 @@ struct SetupWizardView: View {
     @State private var vm = VMConfiguration()
     @State private var files: [URL] = []
     @State private var importing = false
-    @State private var baseURL = ""
+    /// LineageOS 23.2 disks hosted on this project's GitHub release (vda.qcow2 is
+    /// zlib-compressed so each asset fits GitHub's 2 GB limit; QEMU reads it as-is).
+    @State private var baseURL = "https://github.com/alolaxd/AndroiOS/releases/download/guest-lineage-23.2/"
     @State private var downloadQueue: [String] = []
     @State private var error: String?
     @State private var installing = false
@@ -47,7 +49,7 @@ struct SetupWizardView: View {
 
     @ViewBuilder private var welcome: some View {
         Section {
-            Text("AndroiOS runs a full Android (LineageOS via Waydroid) virtual machine on this device. The guest's CPU is emulated with QEMU's JIT and its GPU commands are translated to Metal (virgl → ANGLE).")
+            Text("AndroiOS runs Android (LineageOS 23.2 / Android 16) in a virtual machine on this device. The guest's CPU is emulated with QEMU's JIT, and Android's graphics run on the Apple GPU (virgl → ANGLE → Metal).")
                 .font(.callout)
         }
         Section("This device") {
@@ -59,7 +61,7 @@ struct SetupWizardView: View {
             if StorageHelper.availableBytes < 8 << 30 { Text("At least 8 GB free space is recommended.").foregroundStyle(.orange) }
         }
         Section("You will need") {
-            Label("StikDebug, to enable JIT", systemImage: "bolt.fill")
+            Label("StikDebug with the universal.js script, to enable JIT", systemImage: "bolt.fill")
             Label("GetMoreRAM (or TrollStore / paid dev profile) for the memory entitlements", systemImage: "memorychip")
             Label("The guest image built with Guest/build-guest.sh on a Mac", systemImage: "shippingbox")
         }
@@ -92,7 +94,7 @@ struct SetupWizardView: View {
             Button("Import from Files…", systemImage: "folder") { importing = true }
             ForEach(files, id: \.self) { Text($0.lastPathComponent).font(.caption.monospaced()) }
         } header: { Text("Guest image") } footer: {
-            Text("LineageOS: select efi_vars.fd, vda.qcow2 and vdb.qcow2 from the UTM bundle's Data folder (Guest/fetch-lineage.sh). Or the Waydroid guest: vmlinuz, initrd.img, androios.qcow2.")
+            Text("Already have the files? Select efi_vars.fd, vda.qcow2 and vdb.qcow2 (Guest/fetch-lineage.sh on a Mac).")
         }
         Section {
             TextField("https://example.com/androios/", text: $baseURL)
@@ -112,7 +114,7 @@ struct SetupWizardView: View {
                 }.disabled(URL(string: baseURL)?.scheme == nil)
             }
             if let e = downloads.error { Text(e).font(.caption).foregroundStyle(.red) }
-        } header: { Text("…or download") } footer: { Text("Downloads resume after interruptions.") }
+        } header: { Text("Download LineageOS 23.2 (about 1 GB)") } footer: { Text("Downloads Android into the app's storage. Downloads resume after interruptions.") }
         Button("Continue") { step = .hardware }.disabled(!hasGuestFiles)
     }
 

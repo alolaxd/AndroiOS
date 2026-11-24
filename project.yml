@@ -34,6 +34,10 @@ targets:
       properties:
         CFBundleDisplayName: AndroiOS
         UILaunchScreen: {}
+        # Explicit scene manifest: UIKit requires scene-based lifecycle on new iOS
+        # releases; SwiftUI's App uses one window scene.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
         UIRequiresFullScreen: true
         UIStatusBarHidden: true
         UIBackgroundModes: [audio]
