@@ -1,6 +1,6 @@
 # AndroiOS
 
-> AndroiOS is an open-source, sideloaded iOS/iPadOS app that runs Android (LineageOS 23.2 / Android 16) as an AArch64 virtual machine using QEMU's JIT, with Android's OpenGL ES graphics translated to Metal on the Apple GPU. Status: early alpha (v0.1.0-alpha).
+> AndroiOS is an open-source, sideloaded iOS/iPadOS app that runs Android (LineageOS 23.2 / Android 16) as an AArch64 virtual machine using QEMU's JIT, with Android's OpenGL ES graphics translated to Metal on the Apple GPU. Status: early alpha (v0.2.0-alpha).
 
 ## What it does
 - Boots the prebuilt LineageOS 23.2 virtio_arm64only VM (UEFI → GRUB → Android) inside the app process on iPhone and iPad.
@@ -17,7 +17,7 @@
 - iPhone or iPad with an A13 chip or newer; 8 GB RAM devices or M-series iPads recommended (Android 16 is tight on 4 GB devices).
 - Sideloading (AltStore, SideStore, TrollStore, or Xcode).
 - Memory entitlements: com.apple.developer.kernel.increased-memory-limit and com.apple.developer.kernel.extended-virtual-addressing (via GetMoreRAM, TrollStore, or a paid developer profile).
-- JIT via StikDebug.
+- JIT via StikDebug with the universal.js script (required on iOS 26+ devices with TXM, A15 and newer).
 
 ## Performance (measured in a Mac harness running the iOS engine code, Apple A18 Pro GPU)
 - LineageOS boot animation: 40–50 FPS. Boot to setup wizard: ~3–5 minutes.
@@ -26,7 +26,7 @@
 
 ## Status and known issues
 - Verified in the Mac harness: boot, GPU rendering with readable text, touch, audio.
-- Not yet working on real devices: dark screen when launched with JIT; SideStore install error "The file can't be opened".
+- v0.2.0-alpha fixes the device issues found so far, pending on-device confirmation: a crash at launch with JIT on iOS 26+ (the JIT check executed a page the debugger hadn't prepared; AndroiOS now uses StikDebug's universal.js protocol, brk #0xf00d with x16=1 to prepare and x16=0 to detach) and SideStore's "The file can't be opened" (large IPAs exhaust SideStore's re-signer; the app now downloads LineageOS in its setup wizard).
 
 ## Relationship to UTM
 UTM is a mature, general-purpose VM app for iOS/macOS. AndroiOS is an Android-only app that reuses UTM's GPU components and bundles LineageOS for one-tap setup. UTM is currently the more proven option.
