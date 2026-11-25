@@ -1,4 +1,10 @@
-# AndroiOS
+<p align="center">
+  <img src="docs/images/icon.png" width="128" height="128" alt="AndroiOS app icon">
+</p>
+
+<h1 align="center">AndroiOS</h1>
+
+<p align="center">Android on iOS, reimagined.</p>
 
 Run Android (LineageOS 23.2 / Android 16) on an iPhone or iPad. AndroiOS is a sideloaded
 SwiftUI app that runs an AArch64 VM **in-process** with QEMU's JIT (TCG). Android's
