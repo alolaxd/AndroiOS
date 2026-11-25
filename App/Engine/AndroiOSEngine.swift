@@ -123,7 +123,14 @@ final class AndroiOSEngine: ObservableObject {
         }
     }
 
-    private func refreshStats() { stats = aios_vm_get_perf_stats(vmID) }
+    /// Becomes true once the guest has drawn anything; the boot overlay is
+    /// only shown before that.
+    @Published private(set) var hasFirstFrame = false
+
+    private func refreshStats() {
+        stats = aios_vm_get_perf_stats(vmID)
+        if !hasFirstFrame, frames.latest() != nil { hasFirstFrame = true }
+    }
 
     // MARK: console
     nonisolated private func enqueue(_ data: Data) {

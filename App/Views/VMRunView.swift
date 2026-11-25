@@ -31,7 +31,10 @@ struct VMRunView: View {
                 PerformanceOverlay(stats: engine.stats, hostFPS: hostFPS, thermal: thermal, target: vm.targetFPS)
                     .padding(.top, 4).padding(.leading, 6)
             }
-            if engine.state == .starting || (engine.state == .running && engine.stats.fps == 0 && vm.gpu != .none && !showConsole) {
+            // Only until the guest's first frame. Android redraws only when something
+            // changes, so 0 FPS on a static screen is normal; showing the overlay then
+            // made it flicker, and inserting it above the display cancelled touches.
+            if engine.state == .starting || (engine.state == .running && !engine.hasFirstFrame && vm.gpu != .none && !showConsole) {
                 bootingBadge
             }
             if let notice = engine.memoryNotice {
