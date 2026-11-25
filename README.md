@@ -9,7 +9,7 @@
 ## Disclaimer
 **This app can not be published to the App Store.**
 This is because:
-1. Apple does not natively allow JIT and the developer entitlements used to allow increased memory usage on the App Store.
+1. Apple does not natively allow JIT (and the developer entitlements used to allow increased memory usage) on the App Store.
 2. App Store policies state that the app must be closed source, with no public code available for anyone, which this app isn't (GPL-3.0, open source).
    
 # Overview
