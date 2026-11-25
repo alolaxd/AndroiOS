@@ -70,8 +70,31 @@ final class AndroiOSEngine: ObservableObject {
         }
     }
 
+    /// True only when the app paused the VM because it went to the background;
+    /// becoming active again resumes it. A user pause stays paused.
+    @Published private(set) var pausedForBackground = false
+    /// Set when iOS warned about memory and the guest was shrunk.
+    @Published private(set) var memoryNotice: String?
+
     func pause()  { if aios_vm_pause(vmID) == 0 { state = .paused } }
-    func resume() { if aios_vm_resume(vmID) == 0 { state = .running } }
+    func resume() { if aios_vm_resume(vmID) == 0 { state = .running; pausedForBackground = false } }
+    func pauseForBackground() {
+        guard state == .running else { return }
+        pause()
+        pausedForBackground = state == .paused
+    }
+
+    /// Memory warning: give memory back through virtio-balloon instead of pausing
+    /// (a paused VM still holds all its memory, and looks frozen).
+    func relieveMemoryPressure() {
+        guard state == .running || state == .paused else { return }
+        let target = aios_vm_relieve_memory_pressure(vmID)
+        memoryNotice = target > 0
+            ? "Low memory: Android was shrunk to \(String(format: "%.1f", Double(target) / 1024)) GB."
+            : "Low memory: iOS may close AndroiOS. Lower guest RAM in Settings."
+    }
+    func clearMemoryNotice() { memoryNotice = nil }
+    var guestRAMMB: Int { Int(aios_vm_guest_ram_mb(vmID)) }
     func stop()   { _ = aios_vm_stop(vmID) }
 
     /// Blocking: call from a background task. Throws if the device set can't migrate (virgl).

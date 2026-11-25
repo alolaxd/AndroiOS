@@ -34,6 +34,20 @@ struct VMRunView: View {
             if engine.state == .starting || (engine.state == .running && engine.stats.fps == 0 && vm.gpu != .none && !showConsole) {
                 bootingBadge
             }
+            if let notice = engine.memoryNotice {
+                Text(notice)
+                    .font(.footnote)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color(white: 0.12), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(white: 0.25), lineWidth: 0.5))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, showPerf ? 110 : 12)
+                    .onTapGesture { engine.clearMemoryNotice() }
+                    .task(id: notice) {
+                        try? await Task.sleep(nanoseconds: 6_000_000_000)
+                        engine.clearMemoryNotice()
+                    }
+            }
         }
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)

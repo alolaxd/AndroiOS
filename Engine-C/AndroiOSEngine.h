@@ -79,6 +79,12 @@ int aios_vm_stop(int vm_id);
 aios_state_t aios_vm_get_state(int vm_id);
 /* Guest RAM actually configured (may be lower than requested: see memory budget). */
 long aios_vm_guest_ram_mb(int vm_id);
+/* Memory warning: shrink the guest by 512 MB through virtio-balloon (min 1 GB).
+ * Returns the new target in MB, or -1. Frees host memory; the VM keeps running. */
+long aios_vm_relieve_memory_pressure(int vm_id);
+/* What iOS lets this process use in total (available + current footprint), MB.
+ * ~3.5 GB on 8 GB iPhones without increased-memory-limit, ~6 GB with it. */
+long aios_process_memory_limit_mb(void);
 
 /* Save full VM state to `path` (pauses the guest). 0 on success. The device
  * set must be migratable: virgl ("gpu":"virgl") is not, so this fails there. */

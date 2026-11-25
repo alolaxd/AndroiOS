@@ -27,14 +27,19 @@ UTM/QEMU: UEFI → GRUB → Android, Mesa virgl, drm_hwcomposer.
 - Boot animation at 40–50 FPS; GPU benchmark (glmark2) 103–130 FPS
 
 ## Known Issues
-- **Dark screen / crash at launch with JIT (iOS 26+, A15 and later). Fixed in v0.2.0-alpha, awaiting on-device confirmation.**
-  Cause: the startup JIT check executed a page the debugger had never prepared, which TXM kills.
-  AndroiOS now follows StikDebug's `universal.js` protocol (`brk #0xf00d`, see "JIT on iOS 26+"
-  below) and never executes code to probe. Use StikDebug's **universal.js** script.
-- **SideStore: "The file can't be opened". Fixed in v0.2.0-alpha.** SideStore's re-signer runs out
-  of memory on large IPAs ([SideStore#1509](https://github.com/SideStore/SideStore/issues/1509)), and
-  the 1 GB IPA had a 2.2 GB disk inside. Install the 10 MB `AndroiOS.ipa`; the setup wizard
-  downloads LineageOS 23.2 (~1.2 GB) into the app instead.
+- **Freezes at 0 FPS until you pull down Notification Center; crashes during boot. Fixed in v0.2.1-alpha, awaiting on-device confirmation.**
+  Cause: memory. Without the increased-memory-limit entitlement an 8 GB iPhone gives an app ~3.5 GB,
+  so iOS sent memory warnings, and AndroiOS **paused** the VM on each one (0 FPS, idle CPU); becoming
+  active again resumed it. When memory ran out, iOS killed the app. Now memory warnings shrink
+  Android through virtio-balloon (returning memory to iOS) without pausing, the default guest RAM
+  is based on what iOS actually allows the app, and the setup screen shows that limit and whether
+  the memory entitlement is active. QEMU threads also run at user-interactive QoS, as in UTM.
+- **App unresponsive after the LineageOS download. Fixed in v0.2.1-alpha.** Download progress
+  callbacks ran on the main thread (tens of thousands for 1.2 GB). They now run in the background
+  with progress shown 4 times a second, and the wizard continues automatically when the download ends.
+- Dark screen / crash at launch with JIT on iOS 26+: fixed in v0.2.0-alpha. Confirmed on an
+  iPhone 16 Pro: LineageOS reaches its boot animation.
+- SideStore "The file can't be opened": fixed in v0.2.0-alpha (10 MB IPA, in-app LineageOS download).
 
 ## JIT on iOS 26+
 On iOS 26 and later, devices with the Trusted Execution Monitor (TXM, A15 and newer) only run code
@@ -86,4 +91,6 @@ TrollStore installs; SideStore cannot sign IPAs that large.
 ## License
 QEMU is GPL-2.0; the patches and code linked into `QEMU.framework` are GPL-2.0-or-later.
 virglrenderer and libepoxy are MIT, ANGLE is BSD-3-Clause, and LineageOS is under its
-own licenses.
+own licenses. The app icon contains the Android robot, which is reproduced or modified from work
+created and shared by Google and used according to terms described in the Creative Commons 3.0
+Attribution License.

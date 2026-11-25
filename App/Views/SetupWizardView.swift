@@ -55,6 +55,13 @@ struct SetupWizardView: View {
         Section("This device") {
             LabeledContent("Model", value: caps.machine)
             LabeledContent("Memory", value: String(format: "%.1f GB", caps.physicalMemoryGB))
+            if caps.processMemoryLimitMB > 0 {
+                LabeledContent("Usable by AndroiOS", value: String(format: "%.1f GB", Double(caps.processMemoryLimitMB) / 1024))
+                if !caps.memoryEntitlementLikelyActive {
+                    Text("The increased-memory-limit entitlement doesn't look active, so Android gets less RAM. Apply it with GetMoreRAM (or TrollStore / a paid developer profile) and relaunch.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
             LabeledContent("CPU cores", value: "\(caps.cores) (\(caps.performanceCores) performance)")
             LabeledContent("Free storage", value: StorageHelper.format(StorageHelper.availableBytes))
             if !caps.isSupported { Text("This device is older than A13; expect very low performance.").foregroundStyle(.orange) }
@@ -149,7 +156,11 @@ struct SetupWizardView: View {
             guard let url else { return }
             files.append(url)
             downloadQueue.removeFirst()
-            downloadNext()
+            if downloadQueue.isEmpty {
+                if hasGuestFiles { step = .hardware }   // all three files are in: go on
+            } else {
+                downloadNext()
+            }
         }
     }
 

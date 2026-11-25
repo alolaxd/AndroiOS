@@ -33,32 +33,41 @@ struct DeviceCapabilities {
         return true
     }
 
-    /// Defaults from the design doc's device matrix.
+    /// Total memory iOS lets this app use (available + current footprint), in MB.
+    /// On 8 GB iPhones it's ~3.5 GB without the increased-memory-limit
+    /// entitlement and ~6 GB with it, so it also shows whether GetMoreRAM worked.
+    var processMemoryLimitMB: Int { Int(aios_process_memory_limit_mb()) }
+
+    /// Rough check: limit well under half of physical RAM means the
+    /// increased-memory-limit entitlement isn't active.
+    var memoryEntitlementLikelyActive: Bool {
+        let limit = processMemoryLimitMB
+        return limit == 0 || Double(limit) > physicalMemoryGB * 1024 * 0.6
+    }
+
+    /// Guest RAM that fits: the app's limit minus ~1.5 GB for QEMU, the JIT
+    /// buffer, virgl/ANGLE and the UI, minus a little headroom. 1–4 GB.
     var defaultGuestRAMMB: Int {
-        switch physicalMemoryGB {
-        case ..<5: return 2048
-        case ..<7: return 3072
-        default: return 4096
-        }
+        let limit = processMemoryLimitMB
+        guard limit > 0 else { return 2048 }      // simulator / Mac
+        let fit = (limit - 1536 - 512) / 256 * 256
+        return max(1024, min(4096, fit))
     }
 
     var maxGuestRAMMB: Int {
-        switch physicalMemoryGB {
-        case ..<5: return 2560
-        case ..<7: return 4096
-        case ..<9: return 6144
-        default: return 8192
-        }
+        let limit = processMemoryLimitMB
+        guard limit > 0 else { return 8192 }
+        return max(1024, (limit - 1536) / 256 * 256)
     }
 
     /// Leave efficiency cores to iOS, the GPU thread and audio.
     var defaultCPUs: Int { max(1, min(4, performanceCores)) }
 
-    /// Warn above 50% of device RAM.
+    /// Warning when guest RAM plus VM overhead exceeds what iOS lets the app use.
     func ramWarning(forGuestMB mb: Int) -> String? {
-        let frac = Double(mb) * 1_048_576 / Double(physicalMemory)
-        if frac > 0.5 {
-            return "Guest RAM is \(Int(frac * 100))% of this device's memory. Without the increased-memory-limit entitlement (GetMoreRAM, TrollStore or a paid developer profile) iOS will kill the app."
+        let limit = processMemoryLimitMB
+        if limit > 0, mb + 1536 > limit {
+            return "iOS lets AndroiOS use \(String(format: "%.1f", Double(limit) / 1024)) GB in total, and the VM needs about 1.5 GB on top of guest RAM. AndroiOS will lower guest RAM at boot so iOS doesn't close the app."
         }
         return nil
     }

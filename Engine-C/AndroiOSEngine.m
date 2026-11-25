@@ -4,6 +4,7 @@
 #import <Foundation/Foundation.h>
 #include <TargetConditionals.h>
 #include <pthread.h>
+#include <pthread/qos.h>
 #include <sys/mman.h>
 #include <mach/mach.h>
 #include <unistd.h>
@@ -97,7 +98,9 @@ aios_jit_status_t aios_jit_probe(void) {
 static long guest_ram_budget_mb(long requested_mb) {
 #if TARGET_OS_IPHONE
     long ram = requested_mb;
-    const uint64_t overhead = (uint64_t)(256 + 512) << 20;
+    /* Measured on device: QEMU + 256 MB TCG buffer + virgl/ANGLE/Metal
+     * allocations + UI reach ~1.5 GB beyond guest RAM. */
+    const uint64_t overhead = (uint64_t)1536 << 20;
     uint64_t avail = os_proc_available_memory();
     if (avail > overhead && ((uint64_t)ram << 20) + overhead > avail) {
         long fit = (long)((avail - overhead) >> 20) & ~255L;
@@ -128,6 +131,7 @@ static struct {
     _Atomic bool qemu_done;
     int disp_w, disp_h;
     long ram_mb;          /* after the memory-budget clamp */
+    long balloon_mb;      /* current balloon target, 0 = none */
     /* touch: per-slot tracking ids, -1 = up */
     int tracking[10];
     int next_tracking_id;
@@ -327,9 +331,10 @@ static void *console_thread(void *unused) {
     return NULL;
 }
 
-static int spawn(void *(*fn)(void *), size_t stack) {
+static int spawn(void *(*fn)(void *), size_t stack, qos_class_t qos) {
     pthread_attr_t attr; pthread_t t;
     pthread_attr_init(&attr);
+    pthread_attr_set_qos_class_np(&attr, qos, 0);
     pthread_attr_setstacksize(&attr, stack);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     int r = pthread_create(&t, &attr, fn, NULL);
@@ -341,8 +346,10 @@ int aios_vm_start(int vm_id, const aios_callbacks_t *callbacks) {
     if (vm_id != 0 || !vm.created || vm.state != AIOS_STOPPED || vm.qemu_done) return -1;
     if (callbacks) vm.cb = *callbacks;
     vm.state = AIOS_STARTING;
-    if (spawn(qemu_thread, 8 << 20) != 0) { vm.state = AIOS_ERROR; return -1; }
-    spawn(console_thread, 512 << 10);
+    // QEMU (main loop + vCPUs, which inherit it) at user-interactive QoS, as UTM
+    // does: at default QoS iOS demotes it whenever the UI is idle or the device is hot.
+    if (spawn(qemu_thread, 8 << 20, QOS_CLASS_USER_INTERACTIVE) != 0) { vm.state = AIOS_ERROR; return -1; }
+    spawn(console_thread, 512 << 10, QOS_CLASS_UTILITY);
     return 0;
 }
 
@@ -350,7 +357,43 @@ int aios_vm_pause(int vm_id)  { if (vm.state != AIOS_RUNNING) return -1; qemu_io
 int aios_vm_resume(int vm_id) { if (vm.state != AIOS_PAUSED)  return -1; qemu_ios_resume(); vm.state = AIOS_RUNNING; return 0; }
 int aios_vm_stop(int vm_id)   { if (vm.state != AIOS_RUNNING && vm.state != AIOS_PAUSED) return -1; qemu_ios_request_shutdown(); return 0; }
 aios_state_t aios_vm_get_state(int vm_id) { return vm.state; }
-long aios_vm_guest_ram_mb(int vm_id) { return vm.ram_mb; }
+long aios_vm_guest_ram_mb(int vm_id) { return vm.balloon_mb ? vm.balloon_mb : vm.ram_mb; }
+
+static uint64_t phys_footprint(void) {
+    task_vm_info_data_t info; mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
+    return task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &n) == KERN_SUCCESS
+        ? info.phys_footprint : 0;
+}
+
+long aios_process_memory_limit_mb(void) {
+#if TARGET_OS_IPHONE
+    return (long)((os_proc_available_memory() + phys_footprint()) >> 20);
+#else
+    return 0;
+#endif
+}
+
+/* Memory warning: shrink the guest 512 MB via virtio-balloon (not below 1 GB).
+ * The guest hands pages back and QEMU releases them to iOS. */
+long aios_vm_relieve_memory_pressure(int vm_id) {
+    if (vm.state != AIOS_RUNNING && vm.state != AIOS_PAUSED) return -1;
+    long current = vm.balloon_mb ? vm.balloon_mb : vm.ram_mb;
+    long target = current - 512;
+    if (target < 1024) target = 1024;
+    if (target >= current) return current;
+    int r = qemu_ios_balloon_target_mb(target);
+    ELOG("memory warning: balloon %ld -> %ld MB: %{public}s (footprint %llu MB, available %llu MB)",
+         current, target, r == 0 ? "requested" : "no balloon / VM not ready",
+         phys_footprint() >> 20,
+#if TARGET_OS_IPHONE
+         (unsigned long long)(os_proc_available_memory() >> 20)
+#else
+         0ULL
+#endif
+         );
+    if (r == 0) vm.balloon_mb = target;
+    return r == 0 ? target : -1;
+}
 const char *aios_vm_command_line(int vm_id) { return vm.cmdline ?: ""; }
 
 int aios_vm_save_snapshot(int vm_id, const char *path, char *err, int err_len) {

@@ -11,7 +11,7 @@ enum SnapshotManager {
 
     static func handleBackground(engine: AndroiOSEngine, store: VMStore) {
         guard var vm = engine.runningVM, engine.state == .running || engine.state == .paused else { return }
-        guard vm.gpu != .virgl else { engine.pause(); return }
+        guard vm.gpu != .virgl else { engine.pauseForBackground(); return }
 
         let bundle = store.bundle(for: vm)
         let id = engine.currentVMID

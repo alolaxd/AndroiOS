@@ -126,6 +126,15 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "\n[harness] tap (%d,%d) at %.0fs\n", x, y, t);
                 [taps removeObjectAtIndex:0];
             }
+            /* AIOS_BALLOON_AT=t: simulate an iOS memory warning at t seconds. */
+            static bool ballooned;
+            NSString *bAt = NSProcessInfo.processInfo.environment[@"AIOS_BALLOON_AT"];
+            if (bAt && !ballooned && t >= bAt.doubleValue) {
+                ballooned = true;
+                long target = aios_vm_relieve_memory_pressure(vm);
+                fprintf(stderr, "\n[harness] memory warning -> balloon target %ld MB (guest RAM now %ld MB)\n",
+                        target, aios_vm_guest_ram_mb(vm));
+            }
             if (swipe && found) {
                 if (swipeStart == 0) swipeStart = t;
                 /* one swipe = 8 moves over ~0.8 s, alternating direction */

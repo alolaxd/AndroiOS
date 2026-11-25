@@ -15,8 +15,9 @@ struct AndroiOSApp: App {
                 .environmentObject(thermal)
                 .preferredColorScheme(.dark)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
-                    // Under memory pressure: get the guest's state onto disk (or at least stop it allocating).
-                    SnapshotManager.handleBackground(engine: engine, store: store)
+                    // Shrink the guest so iOS gets memory back. (Pausing frees nothing and
+                    // made the VM look frozen until the next scene activation resumed it.)
+                    engine.relieveMemoryPressure()
                 }
         }
         .onChange(of: scenePhase) { phase in
@@ -25,7 +26,8 @@ struct AndroiOSApp: App {
                 saveThumbnail()
                 SnapshotManager.handleBackground(engine: engine, store: store)
             case .active:
-                if engine.state == .paused, engine.runningVM?.gpu == .virgl { engine.resume() }
+                // Resume only what we paused for the background; a user pause stays.
+                if engine.state == .paused, engine.pausedForBackground { engine.resume() }
             default: break
             }
         }

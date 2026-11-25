@@ -27,6 +27,7 @@
 		68A583B93EF5548F94C87864 /* ConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95146C4F1619EB4BB4C35DD1 /* ConsoleView.swift */; };
 		78140DEC4509D0BB63B53C42 /* AndroiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F16BF6DDB135BDEDE1FB454 /* AndroiOSApp.swift */; };
 		86BD445F3630A8195A008B6D /* VMState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9199FCF6F9336FCA14AD8FBC /* VMState.swift */; };
+		8A068D0D05A13A2A9891A4E7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3C0763E5A86359A0234683F7 /* Assets.xcassets */; };
 		989E6175C3DD9C8A59353FB2 /* AndroiOSEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF6E091EFE2666D3E539965A /* AndroiOSEngine.swift */; };
 		A504BC011A42BE62ED2EC4F4 /* JITManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 424FF587F923B21EBD5BBF9C /* JITManager.swift */; };
 		A6758D31790FEDB06C0F91F4 /* IOSurface.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2323779F434621DA46F40BA0 /* IOSurface.framework */; };
@@ -54,6 +55,7 @@
 		1F00E26847007984D8F9D9F9 /* AndroiOSEngine.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AndroiOSEngine.m; sourceTree = "<group>"; };
 		2323779F434621DA46F40BA0 /* IOSurface.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOSurface.framework; path = System/Library/Frameworks/IOSurface.framework; sourceTree = SDKROOT; };
 		3A6DDF0CAF7E38877B194F82 /* AndroiOS-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "AndroiOS-Bridging-Header.h"; sourceTree = "<group>"; };
+		3C0763E5A86359A0234683F7 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		3F16BF6DDB135BDEDE1FB454 /* AndroiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AndroiOSApp.swift; sourceTree = "<group>"; };
 		424FF587F923B21EBD5BBF9C /* JITManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JITManager.swift; sourceTree = "<group>"; };
 		45EA96A9B848F2A4E9D9E4DF /* VMManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VMManagerView.swift; sourceTree = "<group>"; };
@@ -117,6 +119,7 @@
 		6ACE1F906058CF457E986785 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				3C0763E5A86359A0234683F7 /* Assets.xcassets */,
 				9AA354A08F6780622A8E8F43 /* DefaultVM */,
 				A868275F5B70C5F07884D232 /* Keyboard */,
 			);
@@ -308,6 +311,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8A068D0D05A13A2A9891A4E7 /* Assets.xcassets in Resources */,
 				26D96CA62F3D4294C1B02DAB /* default-vm.json in Resources */,
 				47B5832425E965C7B619620A /* keymaps.json in Resources */,
 			);

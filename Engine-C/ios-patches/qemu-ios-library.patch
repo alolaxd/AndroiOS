@@ -1,9 +1,9 @@
 diff --git a/include/qemu-ios-api.h b/include/qemu-ios-api.h
 new file mode 100644
-index 0000000..f42d4e4
+index 0000000..f5874c2
 --- /dev/null
 +++ b/include/qemu-ios-api.h
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,81 @@
 +/*
 + * Entry points exported by QEMU.framework (see qemu/system/ios-main.c).
 + * Consumed by the AndroiOS engine layer; not part of upstream QEMU.
@@ -47,6 +47,10 @@ index 0000000..f42d4e4
 +QEMU_IOS_EXPORT void qemu_ios_send_touch(int slot, int tracking_id, int x, int y,
 +                                         int w, int h, int action);
 +QEMU_IOS_EXPORT void qemu_ios_send_key(int linux_keycode, int down);
++
++/* ---- memory pressure ----------------------------------------------------
++ * Shrink the guest via virtio-balloon (target size in MB). 0 on success. */
++QEMU_IOS_EXPORT int qemu_ios_balloon_target_mb(int64_t target_mb);
 +
 +/* ---- state save (migration to a file) -----------------------------------
 + * Pauses the guest and writes its full state to `path`. Blocks until done.
@@ -132,10 +136,10 @@ index 5eeaf3e..4ac8e02 100644
 +       description: 'Build system emulators as dylibs with qemu_ios_main() (iOS host)')
 diff --git a/system/ios-main.c b/system/ios-main.c
 new file mode 100644
-index 0000000..102ca8e
+index 0000000..617a271
 --- /dev/null
 +++ b/system/ios-main.c
-@@ -0,0 +1,197 @@
+@@ -0,0 +1,227 @@
 +/*
 + * iOS in-process entry points for QEMU (AndroiOS).
 + *
@@ -156,6 +160,8 @@ index 0000000..102ca8e
 +#include "qapi/qapi-commands-char.h"
 +#include "qapi/qapi-commands-migration.h"
 +#include "migration/misc.h"
++#include "qapi/qapi-commands-machine.h"
++#include <pthread/qos.h>
 +#include "qemu-ios-api.h"
 +
 +static volatile int ios_started;
@@ -180,6 +186,12 @@ index 0000000..102ca8e
 +        /* QEMU keeps process-global state; it can only run once per launch. */
 +        return -1;
 +    }
++    /*
++     * The main loop feeds the display, audio and virgl. iOS demotes default-QoS
++     * work when the UI is idle or the device is hot, so run it (and the vCPU
++     * threads it creates, which inherit this) at user-interactive QoS, as UTM does.
++     */
++    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
 +    qemu_init(argc, argv);
 +    __atomic_store_n(&ios_ready, 1, __ATOMIC_RELEASE);
 +    status = qemu_main_loop();
@@ -332,4 +344,26 @@ index 0000000..102ca8e
 +        qapi_free_MigrationInfo(info);
 +        return ret;
 +    }
++}
++
++/*
++ * Ask the guest's virtio-balloon driver to give memory back: set the guest's
++ * target size in MB. Pages the guest surrenders are released to iOS, which is
++ * what actually relieves memory pressure (pausing the VM frees nothing).
++ * Returns 0 on success, -1 if there is no balloon device or the VM isn't up.
++ */
++int qemu_ios_balloon_target_mb(int64_t target_mb)
++{
++    Error *err = NULL;
++
++    if (!ios_enter()) {
++        return -1;
++    }
++    qmp_balloon(target_mb << 20, &err);
++    bql_unlock();
++    if (err) {
++        error_free(err);
++        return -1;
++    }
++    return 0;
 +}
