@@ -37,6 +37,11 @@ struct SettingsView: View {
                     ForEach(Self.resolutions, id: \.self) { r in Text(r.replacingOccurrences(of: "x", with: "×")).tag(r) }
                     Text("Match device").tag("device")
                 }
+                if vm.boot == .uefi {
+                    Picker("Android layout", selection: $vm.layout) { ForEach(VMConfiguration.Layout.allCases) { Text($0.label).tag($0) } }
+                    Text("\(vm.layout.label) layout: \(vm.lcdDensity) dpi. The tablet layout needs an AndroiOS image from v0.3.1 or later; older ones always use the phone layout.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Picker("Frame rate", selection: $vm.targetFPS) { Text("30").tag(30); Text("60").tag(60); Text("120 (ProMotion)").tag(120) }
                 Text("Lower resolutions are much faster: the guest CPU renders Android's UI through TCG.").font(.caption).foregroundStyle(.secondary)
             }
@@ -120,7 +125,13 @@ struct SettingsView: View {
         .onAppear { extraArgsText = vm.extraArgs.joined(separator: "\n") }
     }
 
-    static let resolutions = ["540x960", "720x1280", "1080x1920", "1280x720", "1920x1080"]
+    static var resolutions: [String] {
+        var r = ["540x960", "720x1280", "1080x1920", "1280x720", "1920x1080"]
+        let s = DeviceCapabilities.screenShapedResolution()
+        let shaped = "\(s.width)x\(s.height)"
+        if !r.contains(shaped) { r.insert(shaped, at: 2) }
+        return r
+    }
 
     private var resolutionBinding: Binding<String> {
         Binding(get: { "\(vm.displayWidth)x\(vm.displayHeight)" }, set: { v in

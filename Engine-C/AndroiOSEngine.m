@@ -240,6 +240,10 @@ static NSArray<NSString *> *build_argv(NSDictionary *cfg) {
             @"-device", fmt(@"virtio-blk-pci,drive=hd%lu,bootindex=%lu", (unsigned long)i, (unsigned long)i)]];
     }];
     if (cfg[@"restore_from"]) [a addObjectsFromArray:@[@"-incoming", fmt(@"file:%@", cfg[@"restore_from"])]];
+    // Guest screen density for the AndroiOS images: their GRUB reads the SMBIOS
+    // type 1 SKU string and passes it on as androidboot.lcd_density.
+    if ([cfg[@"lcd_density"] intValue] > 0)
+        [a addObjectsFromArray:@[@"-smbios", fmt(@"type=1,sku=%d", [cfg[@"lcd_density"] intValue])]];
     for (id x in cfg[@"extra_args"] ?: @[]) if ([x isKindOfClass:NSString.class]) [a addObject:x];
     return a;
 }

@@ -48,8 +48,14 @@ The setup wizard downloads one of two images (from this repo's releases), both L
 | **LineageOS 22.2 (Android 15)** (recommended) | 1.0 GB | LineageOS's low-performance VM mode: Android Go low-RAM tuning, 50× system timeouts (no "isn't responding" pop-ups), no setup wizard. Best on 4 GB devices like the iPad 10. |
 | LineageOS 23.2 (Android 16) | 1.2 GB | Newest, but heavier. Low-performance mode crashes Android 16's SystemUI, so it keeps the setup wizard. |
 
-Both skip the boot animation and use a phone layout (320 dpi). Android 14 and older have no
-prebuilt QEMU/UTM arm64 image to start from.
+Both skip the boot animation. Android 14 and older have no prebuilt QEMU/UTM arm64 image to start from.
+
+**Phone or tablet layout.** Each VM has an *Android layout* setting. Phone gives Android a
+360 dp-wide screen (720×1280 at 320 dpi). Tablet gives it 720 dp in this screen's shape
+(e.g. 1080×1552 at 240 dpi on an iPad 10), so Android uses its tablet UI. On iPad, new VMs
+default to tablet. The app passes the density to QEMU as an SMBIOS string
+(`-smbios type=1,sku=<dpi>`); the images' GRUB reads it with its `smbios` module and boots
+Android with `androidboot.lcd_density=<dpi>`. Images without that (before v0.3.1) always use 320.
 
 ## Known Issues
 - **Very slow setup (1–2 FPS, taps ignored).** The 1–2 FPS on still screens is normal: Android only
@@ -111,7 +117,7 @@ TrollStore installs; SideStore cannot sign IPAs that large.
 | `Engine-C/ios-patches/` | QEMU 9.2.4 patches: in-process dylib, iOS JIT, IOSurface display, audio, input |
 | `Engine-C/tests/` | macOS harness (`run-engine-harness.sh`) plus GL checks |
 | `Guest/fetch-lineage.sh` | Fetches and verifies the LineageOS VM |
-| `Guest/make-lite.sh` | Tunes a LineageOS disk for emulation (GRUB: low-perf mode, no boot animation, 320 dpi) and compresses it |
+| `Guest/make-lite.sh` | Tunes a LineageOS disk for emulation (GRUB: low-perf mode, no boot animation, density from the host) and compresses it |
 | `Guest/build-guest.sh` | Alternative guest: Ubuntu + Waydroid (see docs/BUILDING.md) |
 
 ## Important Context

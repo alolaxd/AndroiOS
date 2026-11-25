@@ -142,12 +142,17 @@ struct SetupWizardView: View {
             Stepper("RAM: \(Double(vm.ramMB) / 1024, specifier: "%.1f") GB", value: $vm.ramMB, in: 1024...caps.maxGuestRAMMB, step: 512)
             if let w = caps.ramWarning(forGuestMB: vm.ramMB) { Text(w).font(.caption).foregroundStyle(.orange) }
             Stepper("CPU cores: \(vm.cpus)", value: $vm.cpus, in: 1...max(1, min(6, caps.cores)))
-            Picker("Resolution", selection: $vm.displayHeight) {
-                Text("720×1280 (recommended)").tag(1280)
-                Text("1080×1920 (sharper, slower)").tag(1920)
+            Picker("Android layout", selection: $vm.layout) {
+                ForEach(VMConfiguration.Layout.allCases) { Text($0.label).tag($0) }
             }
-            .onChange(of: vm.displayHeight) { h in vm.displayWidth = h * 9 / 16 }
-        } header: { Text("Hardware") } footer: { Text("Defaults are tuned for this device. The downloaded images use a phone layout (320 dpi), sized for these resolutions.") }
+            .onChange(of: vm.layout) { l in
+                let r = Self.resolution(for: l); vm.displayWidth = r.width; vm.displayHeight = r.height
+            }
+        } header: { Text("Hardware") } footer: {
+            Text(vm.layout == .tablet
+                 ? "Tablet: \(vm.displayWidth)×\(vm.displayHeight), shaped like this screen, with Android's tablet interface."
+                 : "Phone: \(vm.displayWidth)×\(vm.displayHeight). The fastest option.")
+        }
         Button("Create VM") { create() }
     }
 
@@ -187,11 +192,21 @@ struct SetupWizardView: View {
         }
     }
 
+    /// Phone: 720×1280. Tablet: this screen's shape with a 1080 px short side
+    /// (720 dp at 240 dpi). Changeable later in Settings.
+    static func resolution(for layout: VMConfiguration.Layout) -> (width: Int, height: Int) {
+        layout == .phone ? (720, 1280) : DeviceCapabilities.screenShapedResolution(shortSide: 1080)
+    }
+
     init(isFirstRun: Bool) {
         self.isFirstRun = isFirstRun
         var v = VMConfiguration()
         v.ramMB = DeviceCapabilities.current.defaultGuestRAMMB
         v.cpus = DeviceCapabilities.current.defaultCPUs
+        if DeviceCapabilities.isPad {
+            v.layout = .tablet
+            let r = Self.resolution(for: .tablet); v.displayWidth = r.width; v.displayHeight = r.height
+        }
         if let url = Bundle.main.url(forResource: "default-vm", withExtension: "json"),
            let data = try? Data(contentsOf: url),
            let tmpl = try? JSONDecoder().decode(VMTemplate.self, from: data) {
@@ -258,7 +273,7 @@ enum GuestImage: String, CaseIterable, Identifiable {
     var note: String {
         switch self {
         case .lineage22:
-            return "Runs in Android's low-memory mode: no setup wizard, no \"isn't responding\" pop-ups, boots in about 2½ minutes on a fast device. Best for every device, especially 4 GB ones like the iPad 10."
+            return "Runs in Android's low-memory mode: no setup wizard, no \"isn't responding\" pop-ups. Best for every device, especially 4 GB ones like the iPad 10."
         case .lineage23:
             return "Newest Android, but heavier: it includes the setup wizard and can't use the low-memory mode (it crashes Android 16's system UI)."
         }

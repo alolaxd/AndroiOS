@@ -17,7 +17,7 @@ struct VMConfiguration: Codable, Identifiable, Equatable {
 
     var id = UUID()
     var name = "LineageOS"
-    var osDescription = "LineageOS 23.2 (Android 16), virtio_arm64only"
+    var osDescription = "LineageOS (Android), virtio_arm64only"
 
     enum Boot: String, Codable, CaseIterable, Identifiable {
         case uefi, kernel
@@ -45,6 +45,18 @@ struct VMConfiguration: Codable, Identifiable, Equatable {
     var displayWidth = 720
     var displayHeight = 1280
     var targetFPS = 60
+    /// Android layout. Sets the guest's screen density (the AndroiOS images read it
+    /// from SMBIOS in GRUB): phone = 360 dp wide, tablet = 720 dp (Android's tablet UI
+    /// starts at 600 dp).
+    enum Layout: String, Codable, CaseIterable, Identifiable {
+        case phone, tablet
+        var id: String { rawValue }
+        var label: String { self == .phone ? "Phone" : "Tablet" }
+        var widthDP: Int { self == .phone ? 360 : 720 }
+    }
+    var layout: Layout = .phone
+    /// dpi that gives `layout.widthDP` across the short side of the guest display.
+    var lcdDensity: Int { max(120, min(displayWidth, displayHeight) * 160 / layout.widthDP) }
 
     // Devices
     var network = true
@@ -76,7 +88,7 @@ struct VMConfiguration: Codable, Identifiable, Equatable {
         kernel = v(.kernel, d.kernel); initrd = v(.initrd, d.initrd); disk = v(.disk, d.disk)
         kernelArgs = v(.kernelArgs, d.kernelArgs); ramMB = v(.ramMB, d.ramMB); cpus = v(.cpus, d.cpus)
         gpu = v(.gpu, d.gpu); displayWidth = v(.displayWidth, d.displayWidth); displayHeight = v(.displayHeight, d.displayHeight)
-        targetFPS = v(.targetFPS, d.targetFPS); network = v(.network, d.network); portForwards = v(.portForwards, d.portForwards)
+        targetFPS = v(.targetFPS, d.targetFPS); layout = v(.layout, d.layout); network = v(.network, d.network); portForwards = v(.portForwards, d.portForwards)
         audio = v(.audio, d.audio); androidGPURendering = v(.androidGPURendering, d.androidGPURendering)
         extraArgs = v(.extraArgs, d.extraArgs); resumeFromSnapshot = v(.resumeFromSnapshot, d.resumeFromSnapshot)
     }
@@ -101,6 +113,7 @@ struct VMConfiguration: Codable, Identifiable, Equatable {
             "touch_device": touchDevice,
             "extra_args": extraArgs,
         ]
+        if boot == .uefi { c["lcd_density"] = lcdDensity }
         switch boot {
         case .uefi:
             // edk2 firmware ships inside the app bundle.

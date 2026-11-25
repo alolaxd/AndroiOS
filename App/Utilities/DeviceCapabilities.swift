@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import os
 
 /// What this device can give the guest. RAM figures are what iOS will let the
@@ -62,6 +63,16 @@ struct DeviceCapabilities {
 
     /// Leave efficiency cores to iOS, the GPU thread and audio.
     var defaultCPUs: Int { max(1, min(4, performanceCores)) }
+
+    /// This screen's shape in portrait, scaled so the short side is `shortSide`
+    /// pixels (multiples of 8). iPad 10: 1080×1552.
+    static func screenShapedResolution(shortSide: Int = 1080) -> (width: Int, height: Int) {
+        let b = UIScreen.main.nativeBounds
+        let short = min(b.width, b.height), long = max(b.width, b.height)
+        guard short > 0 else { return (shortSide, shortSide * 16 / 9) }
+        return (shortSide & ~7, Int((CGFloat(shortSide) * long / short).rounded()) & ~7)
+    }
+    static var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
 
     /// Warning when guest RAM plus VM overhead exceeds what iOS lets the app use.
     func ramWarning(forGuestMB mb: Int) -> String? {

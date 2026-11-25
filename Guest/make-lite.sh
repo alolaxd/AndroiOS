@@ -7,6 +7,9 @@
 #   android_nobootanim=1     -> no boot animation
 #   android_lcd_density=320  -> phone layout (360 dp wide at 720x1280; the image's
 #                               default of 160 dpi makes it a 720 dp tablet)
+#   ...unless the host passes a density: AndroiOS runs QEMU with
+#   -smbios type=1,sku=<dpi> (phone/tablet layout setting), which GRUB reads with
+#   its smbios module and uses as android_lcd_density.
 #   --low-perf: android_low_perf=1 -> androidboot.low_perf=1 (device/virt/virt-common
 #                               init.low_performance.rc): ro.config.low_ram + Android Go
 #                               LMK tuning, ro.hw_timeout_multiplier=50 (no ANR dialogs
@@ -33,17 +36,30 @@ CFG="$MNT/boot/grub/grub.cfg"
 python3 - "$CFG" "$LOW_PERF" <<'EOF'
 import sys
 p = sys.argv[1]; low_perf = sys.argv[2] == "1"; s = open(p).read()
+import re
 marker = "# AndroiOS: low-performance VM defaults"
-if marker not in s:
-    # first "load_env ... grubenv android_..." line (inside set_kernel_cmdline_dynamic)
-    i = s.index("load_env -f ${partition_persist}/grubenv android_"); j = s.index("\n", i) + 1
-    lines = (["set android_low_perf=1"] if low_perf else []) + \
-            ["set android_nobootanim=1", "set android_lcd_density=320"]
-    s = s[:j] + "\t" + marker + "\n" + "".join("\t" + l + "\n" for l in lines) + s[j:]
-    open(p, "w").write(s)
-assert "set android_lcd_density=320" in open(p).read()
-print("grub.cfg: nobootanim, density 320" + (", low_perf" if low_perf else ""))
+end = "# AndroiOS: end"
+# drop a block from an earlier run (with or without the end marker)
+s = re.sub(r"\t" + re.escape(marker) + r"\n.*?\t" + re.escape(end) + r"\n", "", s, flags=re.S)
+s = re.sub(r"\t" + re.escape(marker) + r"\n(?:\t[^\n]*\n)*?(?=\n)", "", s)
+# after the first "load_env ... grubenv android_..." line (inside set_kernel_cmdline_dynamic)
+i = s.index("load_env -f ${partition_persist}/grubenv android_"); j = s.index("\n", i) + 1
+lines = (["set android_low_perf=1"] if low_perf else []) + [
+    "set android_nobootanim=1",
+    "set android_lcd_density=320",
+    "# density from the host: QEMU -smbios type=1,sku=<dpi>",
+    "insmod smbios",
+    "insmod regexp",
+    "if smbios --type 1 --get-string 0x19 --set aios_dpi; then",
+    "\tif regexp '^[0-9]+$' \"$aios_dpi\"; then set android_lcd_density=$aios_dpi; fi",
+    "fi",
+    end]
+s = s[:j] + "\t" + marker + "\n" + "".join("\t" + l + "\n" for l in lines) + s[j:]
+open(p, "w").write(s)
+assert s.count(marker) == 1 and "aios_dpi" in open(p).read()
+print("grub.cfg: nobootanim, density 320 or host SMBIOS" + (", low_perf" if low_perf else ""))
 EOF
+find "$MNT" -name '._*' -delete; rm -rf "$MNT/.fseventsd" "$MNT/.Spotlight-V100" "$MNT/.Trashes"
 diskutil unmount "${DEV}s1" >/dev/null
 hdiutil detach "$DEV" >/dev/null
 mkdir -p "$(dirname "$OUT")"
