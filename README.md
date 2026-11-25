@@ -89,7 +89,7 @@ The legacy `brk #0x69` handshake is not used; current `universal.js` rejects it.
 TXM, and iOS versions before 26, only need the debugger-attached flag (`CS_DEBUGGED`). Progress is
 logged to Console.app under the subsystems `com.androios.engine` and `com.androios.qemu`.
 
-Tested on a real iPhone (iPhone 16 Pro, iOS 26+): JIT works through StikDebug's universal.js script and LineageOS 23.2 boots on the device.
+Runs well on real devices as of v0.3.1-alpha (tested on an iPhone 16 Pro, iOS 26+): JIT works through StikDebug's universal.js script, and Android boots and is usable.
 
 ## Quick start
 ```sh
