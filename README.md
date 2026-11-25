@@ -6,6 +6,13 @@
 
 <p align="center">Android on iOS, reimagined.</p>
 
+## Disclaimer
+**This app can not be published to the App Store.**
+This is because:
+1. Apple does not natively allow JIT and the developer entitlements used to allow increased memory usage on the App Store.
+2. App Store policies state that the app must be closed source, with no public code available for anyone, which this app isn't (GPL-3.0, open source).
+   
+# Overview
 Run Android (LineageOS 23.2 / Android 16) on an iPhone or iPad. AndroiOS is a sideloaded
 SwiftUI app that runs an AArch64 VM **in-process** with QEMU's JIT (TCG). Android's
 OpenGL ES rendering runs on the **Apple GPU**:
