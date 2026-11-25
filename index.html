@@ -7,6 +7,8 @@
 <meta name="description" content="AndroiOS runs Android (LineageOS 23.2 / Android 16) on iPhone and iPad as an AArch64 virtual machine, using QEMU's JIT and Metal GPU acceleration. Open source, sideloaded, early alpha.">
 <link rel="canonical" href="https://alolaxd.github.io/AndroiOS/">
 <meta name="theme-color" content="#0d0d0f">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 
 <meta property="og:type" content="website">
 <meta property="og:title" content="AndroiOS – Run Android on iPhone and iPad">
@@ -30,7 +32,8 @@
   "description": "A sideloaded iOS and iPadOS app that runs Android (LineageOS 23.2 / Android 16) as an AArch64 virtual machine using QEMU's JIT, with Android's OpenGL ES rendering translated to Metal on the Apple GPU.",
   "applicationCategory": "UtilitiesApplication",
   "operatingSystem": "iOS, iPadOS",
-  "softwareVersion": "0.2.0-alpha",
+  "softwareVersion": "0.2.1-alpha",
+  "image": "https://alolaxd.github.io/AndroiOS/images/icon-512.png",
   "url": "https://alolaxd.github.io/AndroiOS/",
   "screenshot": "https://alolaxd.github.io/AndroiOS/images/screenshot.jpg",
   "downloadUrl": "https://github.com/alolaxd/AndroiOS/releases",
@@ -51,7 +54,7 @@
       "name": "Can you run Android on an iPhone?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Not natively, and not through the App Store. iOS gives apps no hypervisor, so Android has to be emulated: every Android instruction is translated by QEMU's just-in-time compiler. AndroiOS does this as a sideloaded app. It needs JIT (enabled with StikDebug) and extra memory entitlements. The project is an early alpha: LineageOS 23.2 boots in the test harness that runs the same engine code, and version 0.2.0-alpha fixes the device issues found so far; those fixes still need confirming on a real iPhone or iPad."
+        "text": "Not natively, and not through the App Store. iOS gives apps no hypervisor, so Android has to be emulated: every Android instruction is translated by QEMU's just-in-time compiler. AndroiOS does this as a sideloaded app. It needs JIT (enabled with StikDebug's universal.js script) and extra memory entitlements. The project is an early alpha that has been tested on a real iPhone (iPhone 16 Pro): JIT works and LineageOS 23.2 (Android 16) boots on the device."
       }
     },
     {
@@ -83,7 +86,7 @@
       "name": "AndroiOS vs UTM",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "UTM is a mature, general-purpose virtual machine app for iOS and macOS that runs many operating systems. AndroiOS is a small, Android-focused app built on the same approach and the same GPU components (UTM's virglrenderer and libepoxy, and WebKit's ANGLE). It adds an Android-specific setup with LineageOS bundled. UTM is the more proven choice today; AndroiOS is an early alpha that has not yet run on a real device."
+        "text": "UTM is a mature, general-purpose virtual machine app for iOS and macOS that runs many operating systems. AndroiOS is a small, Android-focused app built on the same approach and the same GPU components (UTM's virglrenderer and libepoxy, and WebKit's ANGLE). It adds an Android-specific setup that downloads LineageOS 23.2 in the app. UTM is more mature; AndroiOS is an early alpha that has been tested on an iPhone."
       }
     }
   ]
@@ -119,7 +122,10 @@
     display: flex; align-items: center; justify-content: space-between;
     height: 56px;
   }
-  .brand { font-weight: 600; color: var(--text); }
+  .brand { font-weight: 600; color: var(--text); display: inline-flex; align-items: center; gap: 10px; }
+  .brand img { border-radius: 7px; display: block; }
+  .brand:hover { text-decoration: none; }
+  .app-icon { display: block; border-radius: 20px; margin: 0 0 18px; border: 1px solid var(--border); }
   nav a { color: var(--muted); margin-left: 20px; font-size: 14px; }
 
   .hero { padding: 64px 0 48px; display: grid; grid-template-columns: 1fr 200px; gap: 40px; align-items: center; }
@@ -177,7 +183,7 @@
 
 <header class="top">
   <div class="wrap">
-    <a class="brand" href="./">AndroiOS</a>
+    <a class="brand" href="./"><img src="images/icon-512.png" width="28" height="28" alt="">AndroiOS</a>
     <nav>
       <a class="optional" href="#how-it-works">How it works</a>
       <a class="optional" href="#install">Install</a>
@@ -189,7 +195,8 @@
 <div class="wrap">
   <div class="hero">
     <div>
-      <span class="badge">v0.2.0-alpha · open source</span>
+      <span class="badge">v0.2.1-alpha · open source</span>
+      <img class="app-icon" src="images/icon-512.png" width="88" height="88" alt="AndroiOS app icon">
       <h1>AndroiOS</h1>
       <p class="lede">Run Android (LineageOS 23.2 / Android 16) on iPhone and iPad: an AArch64 virtual machine via QEMU, with Android's graphics on the Apple GPU through Metal.</p>
       <div class="buttons">
@@ -211,7 +218,7 @@
       <li><strong>JIT</strong>, enabled by attaching a debugger with StikDebug. On iOS 26 and later, use StikDebug's <code>universal.js</code> script: on A15 and newer chips, the debugger must prepare executable memory before it can run;</li>
       <li><strong>more memory</strong>, through the <code>increased-memory-limit</code> and <code>extended-virtual-addressing</code> entitlements (GetMoreRAM, TrollStore or a paid developer profile).</li>
     </ul>
-    <div class="note"><strong>Status:</strong> early alpha. LineageOS boots, renders with readable text, and responds to touch and audio in a test harness that runs the same engine code on a Mac. Version 0.2.0-alpha fixes the two device issues found so far (a dark screen at launch with JIT on iOS 26+, and SideStore's "file can't be opened" error); these fixes are awaiting confirmation on a real device.</div>
+    <div class="note"><strong>Status:</strong> early alpha, tested on a real iPhone (iPhone 16 Pro, iOS 26+). JIT works through StikDebug and LineageOS 23.2 boots on the device. Version 0.2.1-alpha addresses freezes and crashes caused by memory pressure on phones without the increased-memory-limit entitlement. Boot, GPU rendering, touch and audio are also verified in a Mac test harness that runs the same engine code.</div>
   </section>
 
   <section id="how-it-works">
@@ -234,7 +241,7 @@
 
   <section id="performance">
     <h2>What performance can I expect?</h2>
-    <p>Graphics are fast; CPU-bound work is slow. These numbers come from a Mac test harness running the iOS engine code, on an Apple A18 Pro GPU (the iPhone 16 Pro chip), not from a phone.</p>
+    <p>Graphics are fast; CPU-bound work is slow. The numbers below come from a Mac test harness running the iOS engine code on an Apple A18 Pro GPU, the same chip as the iPhone 16 Pro. On a phone, expect them to be somewhat lower once it heats up and throttles.</p>
     <table>
       <tr><th>Workload</th><th>Result</th></tr>
       <tr><td>LineageOS 23.2 boot animation</td><td>40–50 FPS</td></tr>
@@ -265,9 +272,9 @@
       <tr><td>Scope</td><td>Any OS, fully configurable</td><td>Android only, preconfigured</td></tr>
       <tr><td>GPU stack</td><td>virglrenderer, libepoxy, WebKit ANGLE</td><td>The same components, at UTM's versions</td></tr>
       <tr><td>Android setup</td><td>Import a LineageOS VM yourself</td><td>LineageOS 23.2 bundled; one-tap setup</td></tr>
-      <tr><td>Maturity</td><td>Widely used, stable releases</td><td>Early alpha, not yet working on devices</td></tr>
+      <tr><td>Maturity</td><td>Widely used, stable releases</td><td>Early alpha, tested on iPhone</td></tr>
     </table>
-    <p>If you need Android on iOS today, UTM with the LineageOS UTM VM is the more proven route. AndroiOS aims to make that experience simpler and Android-specific.</p>
+    <p>UTM is the more mature and proven route. AndroiOS aims to make running Android on iOS simpler and Android-specific.</p>
   </section>
 
 </main>
