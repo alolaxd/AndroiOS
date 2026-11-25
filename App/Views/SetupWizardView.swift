@@ -14,9 +14,11 @@ struct SetupWizardView: View {
     @State private var vm = VMConfiguration()
     @State private var files: [URL] = []
     @State private var importing = false
-    /// LineageOS 23.2 disks hosted on this project's GitHub release (vda.qcow2 is
-    /// zlib-compressed so each asset fits GitHub's 2 GB limit; QEMU reads it as-is).
-    @State private var baseURL = "https://github.com/alolaxd/AndroiOS/releases/download/guest-lineage-23.2/"
+    /// Hosted Android images (see GuestImage; vda.qcow2 is zlib-compressed so each
+    /// asset fits GitHub's 2 GB limit; QEMU reads it as-is).
+    @State private var guestImage: GuestImage = GuestImage.recommended
+    @State private var customURL = false
+    @State private var baseURL = GuestImage.recommended.baseURL
     @State private var downloadQueue: [String] = []
     @State private var error: String?
     @State private var installing = false
@@ -49,7 +51,7 @@ struct SetupWizardView: View {
 
     @ViewBuilder private var welcome: some View {
         Section {
-            Text("AndroiOS runs Android (LineageOS 23.2 / Android 16) in a virtual machine on this device. The guest's CPU is emulated with QEMU's JIT, and Android's graphics run on the Apple GPU (virgl → ANGLE → Metal).")
+            Text("AndroiOS runs Android (LineageOS 22.2 / Android 15 or 23.2 / Android 16) in a virtual machine on this device. The guest's CPU is emulated with QEMU's JIT, and Android's graphics run on the Apple GPU (virgl → ANGLE → Metal).")
                 .font(.callout)
         }
         Section("This device") {
@@ -70,7 +72,7 @@ struct SetupWizardView: View {
         Section("You will need") {
             Label("StikDebug with the universal.js script, to enable JIT", systemImage: "bolt.fill")
             Label("GetMoreRAM (or TrollStore / paid dev profile) for the memory entitlements", systemImage: "memorychip")
-            Label("The guest image built with Guest/build-guest.sh on a Mac", systemImage: "shippingbox")
+            Label("About 3 GB of free storage (Android is downloaded in the next step)", systemImage: "internaldrive")
         }
         Button("Continue") { step = .guest }
     }
@@ -104,8 +106,17 @@ struct SetupWizardView: View {
             Text("Already have the files? Select efi_vars.fd, vda.qcow2 and vdb.qcow2 (Guest/fetch-lineage.sh on a Mac).")
         }
         Section {
-            TextField("https://example.com/androios/", text: $baseURL)
-                .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+            Picker("Android version", selection: $guestImage) {
+                ForEach(GuestImage.allCases) { g in Text(g.title).tag(g) }
+            }
+            .disabled(downloads.isDownloading)
+            .onChange(of: guestImage) { g in if !customURL { baseURL = g.baseURL } }
+            Text(guestImage.note).font(.caption).foregroundStyle(.secondary)
+            Toggle("Use a custom download URL", isOn: $customURL).font(.caption)
+            if customURL {
+                TextField("https://example.com/androios/", text: $baseURL)
+                    .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+            }
             if downloads.isDownloading || downloads.canResume {
                 ProgressView(value: downloads.progress) {
                     Text("\(downloadQueue.first ?? "") — \(StorageHelper.format(UInt64(max(0, downloads.bytesWritten)))) of \(StorageHelper.format(UInt64(max(0, downloads.bytesExpected))))")
@@ -115,13 +126,13 @@ struct SetupWizardView: View {
                     downloads.isDownloading ? downloads.pause() : downloadNext()
                 }
             } else {
-                Button("Download \(Self.guestFiles.joined(separator: ", "))") {
+                Button("Download \(guestImage.shortTitle) (\(guestImage.size))") {
                     downloadQueue = Self.guestFiles.filter { n in !files.contains { $0.lastPathComponent == n } }
                     downloadNext()
                 }.disabled(URL(string: baseURL)?.scheme == nil)
             }
             if let e = downloads.error { Text(e).font(.caption).foregroundStyle(.red) }
-        } header: { Text("Download LineageOS 23.2 (about 1 GB)") } footer: { Text("Downloads Android into the app's storage. Downloads resume after interruptions.") }
+        } header: { Text("Download Android") } footer: { Text("Downloads Android into the app's storage. Downloads resume after interruptions.") }
         Button("Continue") { step = .hardware }.disabled(!hasGuestFiles)
     }
 
@@ -132,12 +143,11 @@ struct SetupWizardView: View {
             if let w = caps.ramWarning(forGuestMB: vm.ramMB) { Text(w).font(.caption).foregroundStyle(.orange) }
             Stepper("CPU cores: \(vm.cpus)", value: $vm.cpus, in: 1...max(1, min(6, caps.cores)))
             Picker("Resolution", selection: $vm.displayHeight) {
-                Text("540×960 (fastest)").tag(960)
-                Text("720×1280 (balanced)").tag(1280)
-                Text("1080×1920 (sharp)").tag(1920)
+                Text("720×1280 (recommended)").tag(1280)
+                Text("1080×1920 (sharper, slower)").tag(1920)
             }
             .onChange(of: vm.displayHeight) { h in vm.displayWidth = h * 9 / 16 }
-        } header: { Text("Hardware") } footer: { Text("Defaults are tuned for this device.") }
+        } header: { Text("Hardware") } footer: { Text("Defaults are tuned for this device. The downloaded images use a phone layout (320 dpi), sized for these resolutions.") }
         Button("Create VM") { create() }
     }
 
@@ -157,6 +167,7 @@ struct SetupWizardView: View {
             files.append(url)
             downloadQueue.removeFirst()
             if downloadQueue.isEmpty {
+                if !customURL { vm.name = guestImage.shortTitle; vm.osDescription = guestImage.title }
                 if hasGuestFiles { step = .hardware }   // all three files are in: go on
             } else {
                 downloadNext()
@@ -213,4 +224,45 @@ private struct VMTemplate: Decodable {
         if let network { v.network = network }
         if let audio { v.audio = audio }
     }
+}
+
+/// Android images hosted on AndroiOS's GitHub releases: the LineageOS
+/// virtio_arm64only VMs from jqssun/android-lineage-qemu, tuned for emulation
+/// by Guest/make-lite.sh (no boot animation, phone layout; low-performance mode
+/// on 22.2).
+enum GuestImage: String, CaseIterable, Identifiable {
+    case lineage22 = "guest-lineage-22.2-lite"
+    case lineage23 = "guest-lineage-23.2-lite"
+
+    var id: String { rawValue }
+    var baseURL: String { "https://github.com/alolaxd/AndroiOS/releases/download/\(rawValue)/" }
+
+    var title: String {
+        switch self {
+        case .lineage22: return "LineageOS 22.2 (Android 15) — recommended"
+        case .lineage23: return "LineageOS 23.2 (Android 16)"
+        }
+    }
+    var shortTitle: String {
+        switch self {
+        case .lineage22: return "LineageOS 22.2"
+        case .lineage23: return "LineageOS 23.2"
+        }
+    }
+    var size: String {
+        switch self {
+        case .lineage22: return "1.0 GB"
+        case .lineage23: return "1.2 GB"
+        }
+    }
+    var note: String {
+        switch self {
+        case .lineage22:
+            return "Runs in Android's low-memory mode: no setup wizard, no \"isn't responding\" pop-ups, boots in about 2½ minutes on a fast device. Best for every device, especially 4 GB ones like the iPad 10."
+        case .lineage23:
+            return "Newest Android, but heavier: it includes the setup wizard and can't use the low-memory mode (it crashes Android 16's system UI)."
+        }
+    }
+
+    static var recommended: GuestImage { .lineage22 }
 }

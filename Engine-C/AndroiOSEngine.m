@@ -163,7 +163,7 @@ static NSArray<NSString *> *build_argv(NSDictionary *cfg) {
         @"-nodefaults",
         @"-M", @"virt,highmem=on,gic-version=3",
         // pauth-impdef: cheap PAC emulation; the architected QARMA is very slow under TCG.
-        @"-cpu", @"max,pauth-impdef=on",
+        @"-cpu", cfg[@"cpu"] ?: @"max,pauth-impdef=on",
         // split-wx: RX code buffer (debugger-prepared on iOS 26+ TXM devices) + RW alias.
         // This is how TCG JIT works under iOS W^X once a debugger grants CS_DEBUGGED.
         @"-accel", fmt(@"tcg,thread=%@,split-wx=on,tb-size=256", cpus > 1 ? @"multi" : @"single"),
