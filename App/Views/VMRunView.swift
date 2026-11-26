@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Full-screen running VM: Android display, nav overlay, HUD and a control menu.
 struct VMRunView: View {
@@ -15,6 +16,8 @@ struct VMRunView: View {
     @State private var hostFPS: Double = 0
     @State private var error: String?
     @State private var audio = AudioBridge()
+    @StateObject private var installer = AppInstaller()
+    @State private var pickingAPK = false
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -37,6 +40,23 @@ struct VMRunView: View {
             if engine.state == .starting || (engine.state == .running && !engine.hasFirstFrame && vm.gpu != .none && !showConsole) {
                 bootingBadge
             }
+            if let status = installer.status {
+                VStack(spacing: 6) {
+                    Text(status).font(.footnote)
+                    if let p = installer.progress { ProgressView(value: p).frame(width: 180) }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(Color(white: 0.12), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(white: 0.25), lineWidth: 0.5))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, 24)
+                .onTapGesture { installer.clearStatus() }
+                .task(id: installer.busy) {
+                    guard !installer.busy else { return }
+                    try? await Task.sleep(nanoseconds: 8_000_000_000)
+                    installer.clearStatus()
+                }
+            }
             if let notice = engine.memoryNotice {
                 Text(notice)
                     .font(.footnote)
@@ -55,6 +75,10 @@ struct VMRunView: View {
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
         .confirmationDialog(vm.name, isPresented: $showMenu, titleVisibility: .visible) { menu }
+        .fileImporter(isPresented: $pickingAPK,
+                      allowedContentTypes: [UTType(filenameExtension: "apk") ?? .data]) { r in
+            if case .success(let url) = r, let port = engine.adbPort { installer.installAPK(at: url, port: port) }
+        }
         .alert("Can't start VM", isPresented: .constant(error != nil)) {
             Button("OK") { error = nil; dismiss() }
         } message: { Text(error ?? "") }
@@ -81,6 +105,10 @@ struct VMRunView: View {
         case .running: Button("Pause") { engine.pause() }
         case .paused: Button("Resume") { engine.resume() }
         default: EmptyView()
+        }
+        if engine.state == .running, let port = engine.adbPort, !installer.busy {
+            Button("Install app from Files (APK)…") { pickingAPK = true }
+            Button("Install F-Droid (app store)") { installer.installFDroid(port: port) }
         }
         if vm.gpu != .none { Button(showConsole ? "Show display" : "Show serial console") { showConsole.toggle() } }
         Button(showPerf ? "Hide performance HUD" : "Show performance HUD") { showPerf.toggle() }

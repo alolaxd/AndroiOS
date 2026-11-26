@@ -46,19 +46,32 @@ struct DeviceCapabilities {
         return limit == 0 || Double(limit) > physicalMemoryGB * 1024 * 0.6
     }
 
-    /// Guest RAM that fits: the app's limit minus ~1.5 GB for QEMU, the JIT
-    /// buffer, virgl/ANGLE and the UI, minus a little headroom. 1–4 GB.
+    /// Memory kept for QEMU, the JIT buffer, virgl/ANGLE and the UI. The safe
+    /// amount holds even if Android touches all of its RAM; the minimum relies on
+    /// the engine's memory watchdog shrinking Android (virtio-balloon) in time.
+    static let safeReserveMB = 1536
+    static let minReserveMB = 896
+
+    /// Guest RAM that fits with the safe reserve. 1–4 GB.
     var defaultGuestRAMMB: Int {
         let limit = processMemoryLimitMB
         guard limit > 0 else { return 2048 }      // simulator / Mac
-        let fit = (limit - 1536 - 512) / 256 * 256
-        return max(1024, min(4096, fit))
+        return max(1024, min(4096, (limit - Self.safeReserveMB) / 256 * 256))
     }
 
+    /// Up to the minimum reserve (e.g. ~1.75 GB instead of ~1.25 GB on a 4 GB iPad).
     var maxGuestRAMMB: Int {
         let limit = processMemoryLimitMB
         guard limit > 0 else { return 8192 }
-        return max(1024, (limit - 1536) / 256 * 256)
+        return max(1024, (limit - Self.minReserveMB) / 256 * 256)
+    }
+
+    /// Reserve to request from the engine for `guestMB`: what's left under the
+    /// limit, between the minimum and safe reserves.
+    func reserveMB(forGuestMB guestMB: Int) -> Int {
+        let limit = processMemoryLimitMB
+        guard limit > 0 else { return Self.safeReserveMB }
+        return min(Self.safeReserveMB, max(Self.minReserveMB, limit - guestMB))
     }
 
     /// Leave efficiency cores to iOS, the GPU thread and audio.
@@ -77,8 +90,8 @@ struct DeviceCapabilities {
     /// Warning when guest RAM plus VM overhead exceeds what iOS lets the app use.
     func ramWarning(forGuestMB mb: Int) -> String? {
         let limit = processMemoryLimitMB
-        if limit > 0, mb + 1536 > limit {
-            return "iOS lets AndroiOS use \(String(format: "%.1f", Double(limit) / 1024)) GB in total, and the VM needs about 1.5 GB on top of guest RAM. AndroiOS will lower guest RAM at boot so iOS doesn't close the app."
+        if limit > 0, mb + Self.safeReserveMB > limit {
+            return "More than the safe amount for this device (iOS lets AndroiOS use \(String(format: "%.1f", Double(limit) / 1024)) GB in total). AndroiOS watches memory and shrinks Android when iOS runs low, which can close background Android apps; very heavy apps may still get AndroiOS closed."
         }
         return nil
     }

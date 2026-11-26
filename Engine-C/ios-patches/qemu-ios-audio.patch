@@ -195,6 +195,50 @@ index 59f0a43..81dd186 100644
  system_ss.add(when: dsound, if_true: files('dsoundaudio.c', 'audio_win_int.c'))
  
  audio_modules = {}
+diff --git a/hw/audio/ac97.c b/hw/audio/ac97.c
+index e373f09..7d9217d 100644
+--- a/hw/audio/ac97.c
++++ b/hw/audio/ac97.c
+@@ -134,6 +134,10 @@ struct AC97LinkState {
+     int bup_flag;
+     MemoryRegion io_nam;
+     MemoryRegion io_nabm;
++    /* Ignore the codec's master/PCM volume and mute: guests whose sound stack
++     * never programs the AC97 mixer (Android with ALSA UCM profiles that don't
++     * cover AC97) otherwise stay muted from reset. They apply volume in software. */
++    bool fixed_volume;
+ };
+ 
+ enum {
+@@ -336,6 +340,9 @@ static void open_voice(AC97LinkState *s, int index, int freq)
+                 po_callback,
+                 &as
+                 );
++            if (s->fixed_volume) {
++                AUD_set_volume_out(s->voice_po, 0, 255, 255);
++            }
+             break;
+ 
+         case MC_INDEX:
+@@ -414,6 +421,10 @@ static void update_combined_volume_out(AC97LinkState *s)
+     lvol = (lvol * plvol) / 255;
+     rvol = (rvol * prvol) / 255;
+ 
++    if (s->fixed_volume) {
++        AUD_set_volume_out(s->voice_po, 0, 255, 255);
++        return;
++    }
+     AUD_set_volume_out(s->voice_po, mute, lvol, rvol);
+ }
+ 
+@@ -1326,6 +1337,7 @@ static void ac97_exit(PCIDevice *dev)
+ 
+ static Property ac97_properties[] = {
+     DEFINE_AUDIO_PROPERTIES(AC97LinkState, card),
++    DEFINE_PROP_BOOL("fixed-volume", AC97LinkState, fixed_volume, false),
+     DEFINE_PROP_END_OF_LIST(),
+ };
+ 
 diff --git a/qapi/audio.json b/qapi/audio.json
 index 519697c..3497272 100644
 --- a/qapi/audio.json

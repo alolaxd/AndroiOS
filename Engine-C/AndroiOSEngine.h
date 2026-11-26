@@ -42,6 +42,11 @@ typedef void (*aios_exit_callback)(int status, void *ctx);
 /* New frame in `surface` (BGRA). Same surface until the resolution changes. */
 typedef void (*aios_frame_callback)(IOSurfaceRef surface, int width, int height,
                                     uint64_t seq, void *ctx);
+/* Frame completion event: an id<MTLSharedEvent> on the system default Metal
+ * device. Frame `seq` is safe to sample once its signaledValue >= seq (the
+ * host's command buffer can wait for that on the GPU: encodeWaitForEvent). */
+void *aios_display_sync_event(void);
+
 /* Interleaved native-endian s16 PCM. */
 typedef void (*aios_audio_callback)(const int16_t *samples, int frames,
                                     int sample_rate, int channels, void *ctx);
@@ -60,6 +65,12 @@ typedef struct {
  *   "disks" (array of paths, boot order = array order)
  *   "efi_code", "efi_vars" (UEFI pflash: edk2 code read-only, NVRAM vars writable)
  *   "ram_mb" (default 1024), "cpus" (default 1)
+ *   "ram_reserve_mb" (default 1536, 768-1536): memory kept for QEMU/GPU/UI; guest
+ *     RAM is lowered at boot if ram_mb + this exceeds what iOS allows the app.
+ *     A memory watchdog shrinks the guest (virtio-balloon) when iOS runs low.
+ *   "lcd_density" (UEFI images from AndroiOS: guest screen dpi via SMBIOS)
+ *   "adb_port": forward 127.0.0.1:<port> to the guest's adbd (5555) and ask the
+ *     AndroiOS images to run adbd without authentication (SMBIOS family adb=1)
  *   "gpu": "virgl" (ANGLE/Metal 3D) | "2d" | "none" (default "none")
  *   "display_width", "display_height" (guest resolution, default 1080x1920)
  *   "network" (bool, default false) and "port_forwards" (["tcp::5555-:5555", ...])
@@ -79,7 +90,7 @@ int aios_vm_stop(int vm_id);
 aios_state_t aios_vm_get_state(int vm_id);
 /* Guest RAM actually configured (may be lower than requested: see memory budget). */
 long aios_vm_guest_ram_mb(int vm_id);
-/* Memory warning: shrink the guest by 512 MB through virtio-balloon (min 1 GB).
+/* Memory warning: shrink the guest by 512 MB through virtio-balloon (min 768 MB).
  * Returns the new target in MB, or -1. Frees host memory; the VM keeps running. */
 long aios_vm_relieve_memory_pressure(int vm_id);
 /* What iOS lets this process use in total (available + current footprint), MB.

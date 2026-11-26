@@ -122,10 +122,10 @@ index 478ec05..8f0bd7c 100644
      }
 diff --git a/util/ios-jit.c b/util/ios-jit.c
 new file mode 100644
-index 0000000..3b8e1b5
+index 0000000..d0e9aeb
 --- /dev/null
 +++ b/util/ios-jit.c
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,212 @@
 +/*
 + * JIT on iOS (AndroiOS): debugger-attached JIT, iOS 26+ TXM aware.
 + *
@@ -330,7 +330,12 @@ index 0000000..3b8e1b5
 +int qemu_ios_jit_prepare_region(void *rx, size_t size) { return 1; }
 +void qemu_ios_jit_detach(void) { }
 +void qemu_ios_jit_log(const char *msg) { }
-+void qemu_ios_log(const char *msg) { }
++void qemu_ios_log(const char *msg)
++{
++    if (getenv("AIOS_QEMU_LOG")) {      /* macOS test harness */
++        fprintf(stderr, "[qemu] %s\n", msg);
++    }
++}
 +
 +#endif
 diff --git a/util/meson.build b/util/meson.build

@@ -45,8 +45,8 @@ The setup wizard downloads one of two images (from this repo's releases), both L
 
 | Version | Download | Notes |
 |---|---|---|
-| **LineageOS 22.2 (Android 15)** (recommended) | 1.0 GB | LineageOS's low-performance VM mode: Android Go low-RAM tuning, 50× system timeouts (no "isn't responding" pop-ups), no setup wizard. Best on 4 GB devices like the iPad 10. |
-| LineageOS 23.2 (Android 16) | 1.2 GB | Newest, but heavier. Low-performance mode crashes Android 16's SystemUI, so it keeps the setup wizard. |
+| **LineageOS 22.2 (Android 15)** (recommended) | 1.0 GB | LineageOS's low-performance VM mode: Android Go low-RAM tuning, 50× system timeouts (no "isn't responding" pop-ups). Best on 4 GB devices like the iPad 10. |
+| LineageOS 23.2 (Android 16) | 1.2 GB | Newest, but heavier. Low-performance mode crashes Android 16's SystemUI, so it runs without it. |
 
 Both skip the boot animation. Android 14 and older have no prebuilt QEMU/UTM arm64 image to start from.
 
@@ -57,10 +57,29 @@ default to tablet. The app passes the density to QEMU as an SMBIOS string
 (`-smbios type=1,sku=<dpi>`); the images' GRUB reads it with its `smbios` module and boots
 Android with `androidboot.lcd_density=<dpi>`. Images without that (before v0.3.1) always use 320.
 
+## Installing apps and games
+With **Install apps from AndroiOS** on (VM settings, default on), the VM menu can install an APK
+from Files, or F-Droid with one tap (from F-Droid, Aurora Store gives access to Google Play's
+catalog). AndroiOS talks to Android's ADB service through a port forward bound to 127.0.0.1, so it
+is never reachable from the network. Needs an image from v0.4 or later (GRUB reads `adb=1` from
+SMBIOS). Only 64-bit ARM apps run, and apps that need Google Play Services may not work.
+
 ## Known Issues
+- **No sound. Fixed in v0.4.0-alpha.** QEMU's AC97 card starts with its volume muted, and
+  Android's audio HAL (ALSA UCM profiles) never unmutes it, so every sample was zero. The card now
+  ignores the guest's hardware mixer (`fixed-volume=on`; Android applies volume in software), and
+  QEMU mixes at 48 kHz to match the app (it was 44.1 kHz played as 48 kHz).
+- **Guest RAM capped at ~1.2 GB on 4 GB iPads.** AndroiOS reserved a fixed 1.5 GB for QEMU, the
+  JIT and the GPU. v0.4.0-alpha allows up to the iOS limit minus ~0.9 GB, and a memory watchdog
+  shrinks Android (virtio-balloon) whenever iOS has less than ~320 MB left for the app.
+- **Display slower than the guest (30–45 FPS shown while Android renders more).** v0.4.0-alpha
+  draws on its own thread instead of the main thread, polls GPU fences every 1 ms instead of 10 ms,
+  rotates 3 frame buffers, skips refreshes without a new frame and runs at 120 Hz on ProMotion.
+  ANGLE's Metal backend (opt-in `angle_backend`) adds GPU-side frame sync, but Android's GL content
+  is black there for now, so the default stays ANGLE's OpenGL backend.
 - **Very slow setup (1–2 FPS, taps ignored).** The 1–2 FPS on still screens is normal: Android only
-  draws when something changes. The lag was Android 16's setup wizard under emulation. The Android 15
-  image skips it and runs in low-RAM mode. The "first launch takes a few minutes" badge no longer
+  draws when something changes. The setup wizard is heavy under emulation; the Android 15 image runs
+  in low-RAM mode, which makes it lighter. The "first launch takes a few minutes" badge no longer
   comes back after Android's first frame, so it doesn't swallow taps (v0.2.2).
 - **Freezes at 0 FPS until you pull down Notification Center; crashes during boot. Fixed in v0.2.1-alpha, awaiting on-device confirmation.**
   Cause: memory. Without the increased-memory-limit entitlement an 8 GB iPhone gives an app ~3.5 GB,

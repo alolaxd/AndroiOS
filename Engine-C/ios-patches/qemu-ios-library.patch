@@ -1,9 +1,9 @@
 diff --git a/include/qemu-ios-api.h b/include/qemu-ios-api.h
 new file mode 100644
-index 0000000..f5874c2
+index 0000000..1ba5480
 --- /dev/null
 +++ b/include/qemu-ios-api.h
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,86 @@
 +/*
 + * Entry points exported by QEMU.framework (see qemu/system/ios-main.c).
 + * Consumed by the AndroiOS engine layer; not part of upstream QEMU.
@@ -39,6 +39,11 @@ index 0000000..f5874c2
 +typedef void (*qemu_ios_frame_callback)(void *iosurface, int width, int height,
 +                                        uint64_t seq, void *ctx);
 +QEMU_IOS_EXPORT void qemu_ios_display_set_callback(qemu_ios_frame_callback cb, void *ctx);
++/* Frame completion: `mtl_shared_event` is an id<MTLSharedEvent> on the system
++ * default device. Each frame's seq is signalled on it once the frame is ready to
++ * sample: by the GPU (ANGLE) on the GL path, or through `cpu_signal` otherwise. */
++QEMU_IOS_EXPORT void qemu_ios_display_set_sync_event(void *mtl_shared_event,
++                                                      void (*cpu_signal)(void *event, uint64_t value));
 +
 +/* ---- input (virtio-multitouch-pci / virtio-keyboard-pci) ---------------- */
 +enum { QEMU_IOS_TOUCH_DOWN = 0, QEMU_IOS_TOUCH_MOVE = 1, QEMU_IOS_TOUCH_UP = 2,

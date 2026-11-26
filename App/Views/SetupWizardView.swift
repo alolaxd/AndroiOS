@@ -139,7 +139,7 @@ struct SetupWizardView: View {
     @ViewBuilder private var hardware: some View {
         Section("Name") { TextField("Name", text: $vm.name) }
         Section {
-            Stepper("RAM: \(Double(vm.ramMB) / 1024, specifier: "%.1f") GB", value: $vm.ramMB, in: 1024...caps.maxGuestRAMMB, step: 512)
+            Stepper("RAM: \(Double(vm.ramMB) / 1024, specifier: "%.2f") GB", value: $vm.ramMB, in: 1024...caps.maxGuestRAMMB, step: 256)
             if let w = caps.ramWarning(forGuestMB: vm.ramMB) { Text(w).font(.caption).foregroundStyle(.orange) }
             Stepper("CPU cores: \(vm.cpus)", value: $vm.cpus, in: 1...max(1, min(6, caps.cores)))
             Picker("Android layout", selection: $vm.layout) {
@@ -273,9 +273,9 @@ enum GuestImage: String, CaseIterable, Identifiable {
     var note: String {
         switch self {
         case .lineage22:
-            return "Runs in Android's low-memory mode: no setup wizard, no \"isn't responding\" pop-ups. Best for every device, especially 4 GB ones like the iPad 10."
+            return "Runs in Android's low-memory mode (Android Go tuning, no \"isn't responding\" pop-ups). Best for every device, especially 4 GB ones like the iPad 10."
         case .lineage23:
-            return "Newest Android, but heavier: it includes the setup wizard and can't use the low-memory mode (it crashes Android 16's system UI)."
+            return "Newest Android, but heavier: it can't use the low-memory mode (it crashes Android 16's system UI)."
         }
     }
 

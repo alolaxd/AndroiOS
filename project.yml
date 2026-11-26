@@ -41,6 +41,9 @@ targets:
           UIApplicationSupportsMultipleScenes: false
         UIRequiresFullScreen: true
         UIStatusBarHidden: true
+        # Let Core Animation run at 120 Hz on ProMotion iPhones (the guest display
+        # polls for new frames every refresh).
+        CADisableMinimumFrameDurationOnPhone: true
         UIBackgroundModes: [audio]
         LSApplicationQueriesSchemes: [stikjit]
         CFBundleShortVersionString: "1.0"

@@ -19,8 +19,8 @@ struct SettingsView: View {
                 LabeledContent("Boot", value: vm.bootOrderNote)
             }
             Section {
-                Stepper(value: $vm.ramMB, in: 1024...caps.maxGuestRAMMB, step: 512) {
-                    LabeledContent("RAM", value: String(format: "%.1f GB", Double(vm.ramMB) / 1024))
+                Stepper(value: $vm.ramMB, in: 1024...caps.maxGuestRAMMB, step: 256) {
+                    LabeledContent("RAM", value: String(format: "%.2f GB", Double(vm.ramMB) / 1024))
                 }
                 if let warn = caps.ramWarning(forGuestMB: vm.ramMB) { Text(warn).font(.caption).foregroundStyle(.orange) }
                 Stepper(value: $vm.cpus, in: 1...max(1, min(6, caps.cores))) {
@@ -87,12 +87,18 @@ struct SettingsView: View {
                      : "Android draws with SwiftShader on the emulated CPU; the compositor still runs on the Apple GPU.")
                     .font(.caption).foregroundStyle(vm.androidGPURendering ? .orange : .secondary)
                 }
-                Toggle("Audio (virtio-sound)", isOn: $vm.audio)
+                Toggle("Audio", isOn: $vm.audio)
                 if !vm.audio {
                     Text("Android's SystemUI crashes without an audio device (AudioManager returns no recording configs). Keep audio on for Android guests.")
                         .font(.caption).foregroundStyle(.orange)
                 }
-                Text("To update LineageOS, run `sudo waydroid upgrade` in the serial console with internet access on.").font(.caption).foregroundStyle(.secondary)
+                if vm.boot == .uefi {
+                    Toggle("Install apps from AndroiOS", isOn: $vm.appInstalls)
+                    Text("Lets the menu install APKs from Files and F-Droid. Runs Android's ADB service, reachable only from inside AndroiOS on this device (localhost). Needs an AndroiOS Android image from v0.4 or later.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("To update LineageOS, run `sudo waydroid upgrade` in the serial console with internet access on.").font(.caption).foregroundStyle(.secondary)
+                }
             }
             Section("Advanced") {
                 if vm.boot == .kernel {

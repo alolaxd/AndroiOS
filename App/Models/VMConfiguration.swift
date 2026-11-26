@@ -67,6 +67,10 @@ struct VMConfiguration: Codable, Identifiable, Equatable {
     /// "tablet" (USB tablet: what UTM-targeted Android images expect) or "multitouch" (virtio, 10 points).
     var touchDevice = "tablet"
 
+    /// Install apps from the iOS app (APKs, F-Droid): runs the guest's adbd without
+    /// authentication, reachable only through a 127.0.0.1 port forward.
+    var appInstalls = true
+
     /// Waydroid guest only: Android renders on the host GPU instead of SwiftShader.
     var androidGPURendering = false
 
@@ -89,7 +93,7 @@ struct VMConfiguration: Codable, Identifiable, Equatable {
         kernelArgs = v(.kernelArgs, d.kernelArgs); ramMB = v(.ramMB, d.ramMB); cpus = v(.cpus, d.cpus)
         gpu = v(.gpu, d.gpu); displayWidth = v(.displayWidth, d.displayWidth); displayHeight = v(.displayHeight, d.displayHeight)
         targetFPS = v(.targetFPS, d.targetFPS); layout = v(.layout, d.layout); network = v(.network, d.network); portForwards = v(.portForwards, d.portForwards)
-        audio = v(.audio, d.audio); androidGPURendering = v(.androidGPURendering, d.androidGPURendering)
+        audio = v(.audio, d.audio); appInstalls = v(.appInstalls, d.appInstalls); androidGPURendering = v(.androidGPURendering, d.androidGPURendering)
         extraArgs = v(.extraArgs, d.extraArgs); resumeFromSnapshot = v(.resumeFromSnapshot, d.resumeFromSnapshot)
     }
 
@@ -114,6 +118,7 @@ struct VMConfiguration: Codable, Identifiable, Equatable {
             "extra_args": extraArgs,
         ]
         if boot == .uefi { c["lcd_density"] = lcdDensity }
+        c["ram_reserve_mb"] = DeviceCapabilities.current.reserveMB(forGuestMB: ramMB)
         switch boot {
         case .uefi:
             // edk2 firmware ships inside the app bundle.

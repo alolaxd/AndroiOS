@@ -33,12 +33,14 @@
 		A6758D31790FEDB06C0F91F4 /* IOSurface.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2323779F434621DA46F40BA0 /* IOSurface.framework */; };
 		AACED92F0421D93766A0901F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1084ECC4F0DF440FC89E84BB /* SettingsView.swift */; };
 		B3401E8F05E3DAA7D23DE1AE /* PerformanceOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B3FF0A7869CE015A4C23541 /* PerformanceOverlay.swift */; };
+		BC6B16AF7B8BDAB5484980A2 /* AppInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 440CBDAEC874E5AA29BD22DC /* AppInstaller.swift */; };
 		BE43A0CBDA0A10EBED20E1BA /* AndroiOSEngine.m in Sources */ = {isa = PBXBuildFile; fileRef = 1F00E26847007984D8F9D9F9 /* AndroiOSEngine.m */; };
 		BE457E56DBA4DBB1DB32DEC5 /* GameController.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = ECDCF590CDF7C60B27FE84EB /* GameController.framework */; };
 		C75C5E1E0511C984907CFBD9 /* DeviceCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4674C8731C8F1B64E99DF85A /* DeviceCapabilities.swift */; };
 		D132EE5B8E9D34D6B3328455 /* DiskImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA3587F511A5E6DDE6755A2 /* DiskImage.swift */; };
 		D4B118B3C8BADC644C2CC412 /* VMConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF88FBD48ED1DDF9F3F490D4 /* VMConfiguration.swift */; };
 		D966ED6805E6822A5F30C5D3 /* StorageManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D06969269799308BD279A0B2 /* StorageManagerView.swift */; };
+		E0DF51FBC8C1FAC05E571551 /* ADBClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 844CA06B2CE7D19A0EA0C6BC /* ADBClient.swift */; };
 		E2E0C92F7D9C3A8769E968D6 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE9961DC4FF0901B1C313E69 /* Metal.framework */; };
 		F008876FC4AD4C6B79B7F0E4 /* SnapshotManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA99E821E37680BA05CC2D8D /* SnapshotManager.swift */; };
 		F30D88240607E0E4D9547377 /* VMManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45EA96A9B848F2A4E9D9E4DF /* VMManagerView.swift */; };
@@ -58,6 +60,7 @@
 		3C0763E5A86359A0234683F7 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		3F16BF6DDB135BDEDE1FB454 /* AndroiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AndroiOSApp.swift; sourceTree = "<group>"; };
 		424FF587F923B21EBD5BBF9C /* JITManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JITManager.swift; sourceTree = "<group>"; };
+		440CBDAEC874E5AA29BD22DC /* AppInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInstaller.swift; sourceTree = "<group>"; };
 		45EA96A9B848F2A4E9D9E4DF /* VMManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VMManagerView.swift; sourceTree = "<group>"; };
 		4674C8731C8F1B64E99DF85A /* DeviceCapabilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceCapabilities.swift; sourceTree = "<group>"; };
 		49856C86E7CCF565A1AECA34 /* SetupWizardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupWizardView.swift; sourceTree = "<group>"; };
@@ -67,6 +70,7 @@
 		76E98E8629EC9C404B44E8C6 /* AndroiOSEngine.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AndroiOSEngine.h; sourceTree = "<group>"; };
 		770A0B85BD33051534D1E9B1 /* ThermalMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThermalMonitor.swift; sourceTree = "<group>"; };
 		7D5089551B57523D6E77C81E /* CoreImage.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreImage.framework; path = System/Library/Frameworks/CoreImage.framework; sourceTree = SDKROOT; };
+		844CA06B2CE7D19A0EA0C6BC /* ADBClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADBClient.swift; sourceTree = "<group>"; };
 		9199FCF6F9336FCA14AD8FBC /* VMState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VMState.swift; sourceTree = "<group>"; };
 		95146C4F1619EB4BB4C35DD1 /* ConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsoleView.swift; sourceTree = "<group>"; };
 		99220834B036C03D6BA2F98F /* AndroiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AndroiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -129,6 +133,7 @@
 		7F6C9D9917390D8188B5111E /* Utilities */ = {
 			isa = PBXGroup;
 			children = (
+				844CA06B2CE7D19A0EA0C6BC /* ADBClient.swift */,
 				4674C8731C8F1B64E99DF85A /* DeviceCapabilities.swift */,
 				DC97A4EDFE95888917357F05 /* DownloadManager.swift */,
 				424FF587F923B21EBD5BBF9C /* JITManager.swift */,
@@ -202,6 +207,7 @@
 			children = (
 				3A6DDF0CAF7E38877B194F82 /* AndroiOS-Bridging-Header.h */,
 				FF6E091EFE2666D3E539965A /* AndroiOSEngine.swift */,
+				440CBDAEC874E5AA29BD22DC /* AppInstaller.swift */,
 				1C607AF590896459CD95BFB8 /* AudioBridge.swift */,
 				B48DF7B137EDC0CC5C9CBFE6 /* InputManager.swift */,
 				B15889F373AFF10F9962D093 /* MetalRenderer.swift */,
@@ -346,9 +352,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E0DF51FBC8C1FAC05E571551 /* ADBClient.swift in Sources */,
 				78140DEC4509D0BB63B53C42 /* AndroiOSApp.swift in Sources */,
 				BE43A0CBDA0A10EBED20E1BA /* AndroiOSEngine.m in Sources */,
 				989E6175C3DD9C8A59353FB2 /* AndroiOSEngine.swift in Sources */,
+				BC6B16AF7B8BDAB5484980A2 /* AppInstaller.swift in Sources */,
 				00DAE35B8B00D4267E2DBA52 /* AudioBridge.swift in Sources */,
 				68A583B93EF5548F94C87864 /* ConsoleView.swift in Sources */,
 				5039B7266661380BF09C23AD /* ContentView.swift in Sources */,

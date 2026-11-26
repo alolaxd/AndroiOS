@@ -20,6 +20,8 @@ final class AndroiOSEngine: ObservableObject {
     private static let maxConsoleChars = 200_000
 
     var hasBooted: Bool { vmID >= 0 }
+    /// Loopback port forwarded to the guest's adbd, when app installs are on.
+    private(set) var adbPort: UInt16?
     var canStart: Bool { !hasBooted }
 
     func start(_ vm: VMConfiguration, bundle: URL) throws {
@@ -34,7 +36,14 @@ final class AndroiOSEngine: ObservableObject {
                 throw EngineError.missingFile(name)
             }
         }
-        let json = try JSONSerialization.data(withJSONObject: vm.engineConfig(bundle: bundle))
+        var config = vm.engineConfig(bundle: bundle)
+        if vm.boot == .uefi && vm.appInstalls {
+            // ADB for installing apps: a random loopback port each run.
+            let port = Int.random(in: 20000...59999)
+            config["adb_port"] = port
+            adbPort = UInt16(port)
+        }
+        let json = try JSONSerialization.data(withJSONObject: config)
         vmID = aios_vm_create(String(decoding: json, as: UTF8.self))
         guard vmID >= 0 else { throw EngineError.badConfig }
         commandLine = String(cString: aios_vm_command_line(vmID))

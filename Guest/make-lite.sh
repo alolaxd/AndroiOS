@@ -10,6 +10,9 @@
 #   ...unless the host passes a density: AndroiOS runs QEMU with
 #   -smbios type=1,sku=<dpi> (phone/tablet layout setting), which GRUB reads with
 #   its smbios module and uses as android_lcd_density.
+#   ...and -smbios type=1,family=adb=1 turns on android_insecure_adb (adbd on TCP
+#   5555 without authentication). AndroiOS only forwards it to 127.0.0.1 on the
+#   device, for installing APKs from the app.
 #   --low-perf: android_low_perf=1 -> androidboot.low_perf=1 (device/virt/virt-common
 #                               init.low_performance.rc): ro.config.low_ram + Android Go
 #                               LMK tuning, ro.hw_timeout_multiplier=50 (no ANR dialogs
@@ -52,6 +55,10 @@ lines = (["set android_low_perf=1"] if low_perf else []) + [
     "insmod regexp",
     "if smbios --type 1 --get-string 0x19 --set aios_dpi; then",
     "\tif regexp '^[0-9]+$' \"$aios_dpi\"; then set android_lcd_density=$aios_dpi; fi",
+    "fi",
+    "# options from the host: QEMU -smbios type=1,family=<opts>, e.g. \"adb=1\"",
+    "if smbios --type 1 --get-string 0x1a --set aios_opts; then",
+    "\tif regexp 'adb=1' \"$aios_opts\"; then set android_insecure_adb=1; fi",
     "fi",
     end]
 s = s[:j] + "\t" + marker + "\n" + "".join("\t" + l + "\n" for l in lines) + s[j:]

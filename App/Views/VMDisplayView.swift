@@ -1,8 +1,8 @@
 import SwiftUI
-import MetalKit
+import QuartzCore
 
-/// The Android display: an MTKView sampling the guest's IOSurface, with full
-/// multitouch (10 points) and hardware-keyboard forwarding.
+/// The Android display: a CAMetalLayer that MetalRenderer draws into from its
+/// own thread, with full multitouch (10 points) and hardware-keyboard forwarding.
 struct VMDisplayView: UIViewRepresentable {
     let engine: AndroiOSEngine
     var preferredFPS: Int
@@ -10,30 +10,36 @@ struct VMDisplayView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(engine: engine, hostFPS: $hostFPS) }
 
-    func makeUIView(context: Context) -> GuestMTKView {
-        let view = GuestMTKView(frame: .zero, device: nil)
-        let renderer = MetalRenderer(frames: engine.frames)
-        view.device = renderer?.device
-        view.delegate = renderer
-        view.colorPixelFormat = .bgra8Unorm
-        view.framebufferOnly = true
-        view.preferredFramesPerSecond = preferredFPS
-        view.enableSetNeedsDisplay = false      // continuous rendering
-        view.isPaused = false
+    func makeUIView(context: Context) -> GuestMetalView {
+        let view = GuestMetalView(frame: .zero)
         view.isMultipleTouchEnabled = true
         view.isUserInteractionEnabled = true
         view.backgroundColor = .black
         view.coordinator = context.coordinator
-        context.coordinator.renderer = renderer
+        if let renderer = MetalRenderer(frames: engine.frames) {
+            renderer.attach(to: view.metalLayer, maxFPS: Self.pollRate(preferredFPS))
+            view.renderer = renderer
+            context.coordinator.renderer = renderer
+        }
         context.coordinator.startFPSCounter()
         return view
     }
 
-    func updateUIView(_ view: GuestMTKView, context: Context) {
-        if view.preferredFramesPerSecond != preferredFPS { view.preferredFramesPerSecond = preferredFPS }
+    func updateUIView(_ view: GuestMetalView, context: Context) {
+        context.coordinator.renderer?.setMaxFPS(Self.pollRate(preferredFPS))
     }
 
-    static func dismantleUIView(_ view: GuestMTKView, coordinator: Coordinator) { coordinator.stopFPSCounter() }
+    static func dismantleUIView(_ view: GuestMetalView, coordinator: Coordinator) {
+        coordinator.stopFPSCounter()
+        coordinator.renderer?.stop()
+    }
+
+    /// The renderer checks for a new guest frame on every display refresh, up to
+    /// the screen's maximum (120 Hz on ProMotion), so a frame waits at most ~8 ms
+    /// to be shown. Refreshes without a new frame cost nothing.
+    static func pollRate(_ preferred: Int) -> Int {
+        preferred < 60 ? preferred : max(preferred, UIScreen.main.maximumFramesPerSecond)
+    }
 
     final class Coordinator {
         let engine: AndroiOSEngine
@@ -48,8 +54,9 @@ struct VMDisplayView: UIViewRepresentable {
         func startFPSCounter() {
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 guard let self, let r = self.renderer else { return }
-                self.hostFPS = Double(r.drawnFrames - self.lastDrawn)
-                self.lastDrawn = r.drawnFrames
+                let drawn = r.drawnFrames
+                self.hostFPS = Double(drawn - self.lastDrawn)
+                self.lastDrawn = drawn
             }
         }
         func stopFPSCounter() { timer?.invalidate() }
@@ -76,8 +83,20 @@ struct VMDisplayView: UIViewRepresentable {
     }
 }
 
-final class GuestMTKView: MTKView {
+final class GuestMetalView: UIView {
+    override class var layerClass: AnyClass { CAMetalLayer.self }
+    var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
     weak var coordinator: VMDisplayView.Coordinator?
+    var renderer: MetalRenderer?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let scale = window?.screen.nativeScale ?? UIScreen.main.nativeScale
+        metalLayer.contentsScale = scale
+        metalLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        renderer?.resize(drawableSize: CGSize(width: bounds.width * scale, height: bounds.height * scale),
+                         scale: scale)
+    }
 
     override func touchesBegan(_ t: Set<UITouch>, with e: UIEvent?) { coordinator?.handle(t, in: self, phase: AIOS_TOUCH_DOWN) }
     override func touchesMoved(_ t: Set<UITouch>, with e: UIEvent?) { coordinator?.handle(t, in: self, phase: AIOS_TOUCH_MOVE) }

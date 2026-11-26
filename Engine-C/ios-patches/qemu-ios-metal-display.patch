@@ -1,5 +1,5 @@
 diff --git a/hw/display/virtio-gpu-virgl.c b/hw/display/virtio-gpu-virgl.c
-index 145a0b3..a4b65e2 100644
+index 145a0b3..337af69 100644
 --- a/hw/display/virtio-gpu-virgl.c
 +++ b/hw/display/virtio-gpu-virgl.c
 @@ -21,6 +21,9 @@
@@ -12,7 +12,28 @@ index 145a0b3..a4b65e2 100644
  
  #include <virglrenderer.h>
  
-@@ -1115,6 +1118,14 @@ int virtio_gpu_virgl_init(VirtIOGPU *g)
+@@ -1067,7 +1070,20 @@ static void virtio_gpu_fence_poll(void *opaque)
+     virgl_renderer_poll();
+     virtio_gpu_process_cmdq(g);
+     if (!QTAILQ_EMPTY(&g->cmdq) || !QTAILQ_EMPTY(&g->fenceq)) {
++#ifdef __APPLE__
++        /* No VIRGL_RENDERER_THREAD_SYNC without eventfd, so fence completion is
++         * only seen when we poll. Android waits for these fences every frame, so
++         * a 10 ms poll alone costs most of a 60 Hz frame. Poll every 1 ms (only
++         * while fences or commands are pending). */
++        static int poll_ms = -1;
++        if (poll_ms < 0) {      /* AIOS_FENCE_POLL_MS: test override */
++            const char *e = getenv("AIOS_FENCE_POLL_MS");
++            poll_ms = e ? MAX(atoi(e), 1) : 1;
++        }
++        timer_mod(gl->fence_poll, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + poll_ms);
++#else
+         timer_mod(gl->fence_poll, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 10);
++#endif
+     }
+ }
+ 
+@@ -1115,12 +1131,24 @@ int virtio_gpu_virgl_init(VirtIOGPU *g)
  #endif
  
      ret = virgl_renderer_init(g, flags, &virtio_gpu_3d_cbs);
@@ -27,6 +48,16 @@ index 145a0b3..a4b65e2 100644
      if (ret != 0) {
          error_report("virgl could not be initialized: %d", ret);
          return ret;
+     }
+ 
++#ifdef __APPLE__
++    gl->fence_poll = timer_new_ms(QEMU_CLOCK_REALTIME,
++#else
+     gl->fence_poll = timer_new_ms(QEMU_CLOCK_VIRTUAL,
++#endif
+                                   virtio_gpu_fence_poll, g);
+ 
+     if (virtio_gpu_stats_enabled(g->parent_obj.conf)) {
 diff --git a/include/ui/egl-helpers.h b/include/ui/egl-helpers.h
 index 4b8c0d2..4b5f725 100644
 --- a/include/ui/egl-helpers.h
@@ -144,10 +175,10 @@ index 81a57fa..89d9a86 100644
          error_setg(errp, "egl: render node init failed");
 diff --git a/ui/ios.c b/ui/ios.c
 new file mode 100644
-index 0000000..3e0a759
+index 0000000..aea702f
 --- /dev/null
 +++ b/ui/ios.c
-@@ -0,0 +1,421 @@
+@@ -0,0 +1,502 @@
 +/*
 + * "ios" display backend (AndroiOS).
 + *
@@ -155,8 +186,10 @@ index 0000000..3e0a759
 + * samples directly from Metal (zero-copy on the GPU path):
 + *
 + *   virtio-gpu-gl (virgl) → GL texture in ANGLE (Metal backend)
-+ *       → glBlitFramebuffer into an IOSurface-backed pbuffer
-+ *       → host: MTLTexture(iosurface:) → CAMetalLayer
++ *       → glBlitFramebuffer into one of 3 IOSurface-backed pbuffers (round robin)
++ *       → ANGLE signals an MTLSharedEvent with the frame's sequence number
++ *         (EGL_ANGLE_metal_shared_event_sync) and QEMU moves on without waiting
++ *       → host: waits for that value on the GPU, MTLTexture(iosurface:) → CAMetalLayer
 + *
 + *   2D devices (virtio-gpu, ramfb) → pixman surface → memcpy into IOSurface
 + *
@@ -190,19 +223,37 @@ index 0000000..3e0a759
 +#ifndef GL_TEXTURE_RECTANGLE_ANGLE
 +#define GL_TEXTURE_RECTANGLE_ANGLE 0x84F5
 +#endif
++#ifndef EGL_SYNC_METAL_SHARED_EVENT_ANGLE
++#define EGL_SYNC_METAL_SHARED_EVENT_ANGLE 0x34D8
++#define EGL_SYNC_METAL_SHARED_EVENT_OBJECT_ANGLE 0x34D9
++#define EGL_SYNC_METAL_SHARED_EVENT_SIGNAL_VALUE_LO_ANGLE 0x34DA
++#define EGL_SYNC_METAL_SHARED_EVENT_SIGNAL_VALUE_HI_ANGLE 0x34DB
 +#endif
++#endif
++
++/* Guest frames rotate through this many IOSurfaces, so QEMU can draw the next
++ * frame while the host is still sampling the previous one. */
++#define IOS_NBUF 3
++
++typedef struct IOSBuffer {
++    IOSurfaceRef surface;
++#ifdef CONFIG_OPENGL
++    EGLSurface pbuffer;
++    GLuint tex;
++    egl_fb fb;
++#endif
++} IOSBuffer;
 +
 +typedef struct IOSDisplay {
 +    DisplayChangeListener dcl;
 +    DisplaySurface *ds;
-+    IOSurfaceRef surface;
++    IOSBuffer buf[IOS_NBUF];
++    int next;                 /* GL path: buffer the next frame goes into */
++    IOSurfaceRef surface;     /* last published surface */
 +    int width, height;
 +    bool gl_scanout;
 +#ifdef CONFIG_OPENGL
 +    egl_fb guest_fb;
-+    egl_fb surface_fb;
-+    EGLSurface pbuffer;
-+    GLuint surface_tex;
 +    bool y_0_top;
 +#endif
 +} IOSDisplay;
@@ -212,6 +263,11 @@ index 0000000..3e0a759
 +static void *frame_ctx;
 +static uint64_t frame_seq;
 +static int ios_gl_enabled;
++/* MTLSharedEvent (as void *) whose value reaches a frame's seq once the frame
++ * is complete on the GPU; the host waits for it before sampling. */
++static void *sync_event;
++static void (*sync_cpu_signal)(void *event, uint64_t value);
++static bool sync_gpu;         /* EGL_ANGLE_metal_shared_event_sync available */
 +
 +void qemu_ios_display_set_callback(qemu_ios_frame_callback cb, void *ctx)
 +{
@@ -219,17 +275,29 @@ index 0000000..3e0a759
 +    __atomic_store_n(&frame_cb, cb, __ATOMIC_RELEASE);
 +}
 +
-+static void ios_emit_frame(IOSDisplay *d)
++void qemu_ios_display_set_sync_event(void *mtl_shared_event,
++                                     void (*cpu_signal)(void *event, uint64_t value))
++{
++    sync_event = mtl_shared_event;
++    sync_cpu_signal = cpu_signal;
++}
++
++/* `gpu_signaled`: the GPU will signal sync_event = frame_seq + 1 itself. */
++static void ios_emit_frame(IOSDisplay *d, bool gpu_signaled)
 +{
 +    qemu_ios_frame_callback cb = __atomic_load_n(&frame_cb, __ATOMIC_ACQUIRE);
 +
 +    if (frame_seq == 0) {
-+        char msg[96];
-+        snprintf(msg, sizeof(msg), "display: first frame %dx%d (%s)", d->width, d->height,
-+                 d->gl_scanout ? "GL scanout" : "2D");
++        char msg[128];
++        snprintf(msg, sizeof(msg), "display: first frame %dx%d (%s, %s)", d->width, d->height,
++                 d->gl_scanout ? "GL scanout" : "2D",
++                 gpu_signaled ? "GPU-signalled frames" : "CPU-signalled frames");
 +        qemu_ios_log(msg);
 +    }
 +    frame_seq++;
++    if (!gpu_signaled && sync_event && sync_cpu_signal) {
++        sync_cpu_signal(sync_event, frame_seq);
++    }
 +    if (cb && d->surface) {
 +        cb((void *)d->surface, d->width, d->height, frame_seq, frame_ctx);
 +    }
@@ -264,30 +332,35 @@ index 0000000..3e0a759
 +/* Replace the IOSurface if the guest resolution changed. */
 +static void ios_ensure_surface(IOSDisplay *d, int w, int h)
 +{
-+    if (d->surface && d->width == w && d->height == h) {
++    if (d->buf[0].surface && d->width == w && d->height == h) {
 +        return;
 +    }
++    for (int i = 0; i < IOS_NBUF; i++) {
++        IOSBuffer *b = &d->buf[i];
 +#ifdef CONFIG_OPENGL
-+    if (d->pbuffer != EGL_NO_SURFACE && d->pbuffer) {
-+        eglReleaseTexImage(qemu_egl_display, d->pbuffer, EGL_BACK_BUFFER);
-+        eglDestroySurface(qemu_egl_display, d->pbuffer);
-+        d->pbuffer = EGL_NO_SURFACE;
-+    }
-+    egl_fb_destroy(&d->surface_fb);
-+    if (d->surface_tex) {
-+        glDeleteTextures(1, &d->surface_tex);
-+        d->surface_tex = 0;
-+    }
++        if (b->pbuffer) {
++            eglReleaseTexImage(qemu_egl_display, b->pbuffer, EGL_BACK_BUFFER);
++            eglDestroySurface(qemu_egl_display, b->pbuffer);
++            b->pbuffer = EGL_NO_SURFACE;
++        }
++        egl_fb_destroy(&b->fb);
++        if (b->tex) {
++            glDeleteTextures(1, &b->tex);
++            b->tex = 0;
++        }
 +#endif
-+    if (d->surface) {
-+        CFRelease(d->surface);
++        if (b->surface) {
++            CFRelease(b->surface);
++        }
++        b->surface = ios_create_surface(w, h);
++        if (!b->surface) {
++            error_report("ios display: IOSurfaceCreate(%dx%d) failed", w, h);
++        }
 +    }
-+    d->surface = ios_create_surface(w, h);
++    d->surface = d->buf[0].surface;
++    d->next = 0;
 +    d->width = w;
 +    d->height = h;
-+    if (!d->surface) {
-+        error_report("ios display: IOSurfaceCreate(%dx%d) failed", w, h);
-+    }
 +}
 +
 +/* ----------------------------------------------------------- 2D path */
@@ -316,6 +389,7 @@ index 0000000..3e0a759
 +        return;
 +    }
 +    ios_ensure_surface(d, surface_width(d->ds), surface_height(d->ds));
++    d->surface = d->buf[0].surface;     /* 2D: one CPU-written buffer */
 +    if (!d->surface || surface_format(d->ds) != PIXMAN_x8r8g8b8) {
 +        return;
 +    }
@@ -336,7 +410,7 @@ index 0000000..3e0a759
 +        memcpy(dst + row * dst_stride + x * 4, src + row * src_stride + x * 4, w * 4);
 +    }
 +    IOSurfaceUnlock(d->surface, 0, NULL);
-+    ios_emit_frame(d);
++    ios_emit_frame(d, false);
 +}
 +
 +/* ----------------------------------------------------------- GL path */
@@ -348,9 +422,9 @@ index 0000000..3e0a759
 +    return qemu_egl_create_context(dgc, params);
 +}
 +
-+static bool ios_bind_surface_texture(IOSDisplay *d)
++static bool ios_bind_surface_texture(IOSDisplay *d, IOSBuffer *b)
 +{
-+    if (d->surface_fb.framebuffer) {
++    if (b->fb.framebuffer) {
 +        return true;
 +    }
 +    /* ANGLE requires the config's bind target: TEXTURE_2D or TEXTURE_RECTANGLE. */
@@ -367,28 +441,28 @@ index 0000000..3e0a759
 +        EGL_TEXTURE_TYPE_ANGLE, GL_UNSIGNED_BYTE,
 +        EGL_NONE,
 +    };
-+    d->pbuffer = eglCreatePbufferFromClientBuffer(qemu_egl_display, EGL_IOSURFACE_ANGLE,
-+                                                  (EGLClientBuffer)d->surface,
++    b->pbuffer = eglCreatePbufferFromClientBuffer(qemu_egl_display, EGL_IOSURFACE_ANGLE,
++                                                  (EGLClientBuffer)b->surface,
 +                                                  qemu_egl_config, attrs);
-+    if (d->pbuffer == EGL_NO_SURFACE) {
++    if (b->pbuffer == EGL_NO_SURFACE) {
 +        error_report("ios display: IOSurface pbuffer failed: %s",
 +                     qemu_egl_get_error_string());
 +        return false;
 +    }
-+    glGenTextures(1, &d->surface_tex);
-+    glBindTexture(gltarget, d->surface_tex);
-+    if (!eglBindTexImage(qemu_egl_display, d->pbuffer, EGL_BACK_BUFFER)) {
++    glGenTextures(1, &b->tex);
++    glBindTexture(gltarget, b->tex);
++    if (!eglBindTexImage(qemu_egl_display, b->pbuffer, EGL_BACK_BUFFER)) {
 +        error_report("ios display: eglBindTexImage failed: %s",
 +                     qemu_egl_get_error_string());
 +        return false;
 +    }
-+    d->surface_fb.width = d->width;
-+    d->surface_fb.height = d->height;
-+    d->surface_fb.texture = d->surface_tex;
-+    d->surface_fb.delete_texture = false;
-+    glGenFramebuffers(1, &d->surface_fb.framebuffer);
-+    glBindFramebuffer(GL_FRAMEBUFFER, d->surface_fb.framebuffer);
-+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, gltarget, d->surface_tex, 0);
++    b->fb.width = d->width;
++    b->fb.height = d->height;
++    b->fb.texture = b->tex;
++    b->fb.delete_texture = false;
++    glGenFramebuffers(1, &b->fb.framebuffer);
++    glBindFramebuffer(GL_FRAMEBUFFER, b->fb.framebuffer);
++    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, gltarget, b->tex, 0);
 +    return true;
 +}
 +
@@ -422,18 +496,50 @@ index 0000000..3e0a759
 +{
 +    IOSDisplay *d = container_of(dcl, IOSDisplay, dcl);
 +
-+    if (!d->gl_scanout || !d->guest_fb.texture || !d->surface) {
++    if (!d->gl_scanout || !d->guest_fb.texture || !d->buf[0].surface) {
 +        return;
 +    }
++    IOSBuffer *b = &d->buf[d->next];
 +    eglMakeCurrent(qemu_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, qemu_egl_rn_ctx);
-+    if (!ios_bind_surface_texture(d)) {
++    if (!ios_bind_surface_texture(d, b)) {
 +        return;
 +    }
++    d->next = (d->next + 1) % IOS_NBUF;
 +    /* IOSurface row 0 is GL's y=0, while Metal treats row 0 as the top. */
-+    egl_fb_blit(&d->surface_fb, &d->guest_fb, d->y_0_top);
-+    /* Make the Metal command buffer complete before the host samples. */
-+    glFinish();
-+    ios_emit_frame(d);
++    egl_fb_blit(&b->fb, &d->guest_fb, d->y_0_top);
++
++    /* Don't wait for the GPU here: this thread also runs the guest's GPU
++     * commands. ANGLE signals sync_event = seq when the blit completes, and
++     * the host's command buffer waits for that value on the GPU. */
++    bool gpu_signaled = false;
++    uint64_t seq = frame_seq + 1;
++    if (sync_gpu && sync_event) {
++        const EGLAttrib attrs[] = {
++            EGL_SYNC_METAL_SHARED_EVENT_OBJECT_ANGLE, (EGLAttrib)sync_event,
++            EGL_SYNC_METAL_SHARED_EVENT_SIGNAL_VALUE_LO_ANGLE, (EGLAttrib)(seq & 0xffffffffu),
++            EGL_SYNC_METAL_SHARED_EVENT_SIGNAL_VALUE_HI_ANGLE, (EGLAttrib)(seq >> 32),
++            EGL_NONE,
++        };
++        EGLSync sync = eglCreateSync(qemu_egl_display, EGL_SYNC_METAL_SHARED_EVENT_ANGLE, attrs);
++        if (sync != EGL_NO_SYNC) {
++            glFlush();
++            eglDestroySync(qemu_egl_display, sync);
++            gpu_signaled = true;
++        }
++    }
++    if (!gpu_signaled) {
++        glFinish();     /* no shared-event sync: complete on the CPU */
++    }
++    d->surface = b->surface;
++    {
++        static bool logged;
++        if (!logged) {
++            logged = true;
++            qemu_ios_log(gpu_signaled ? "display: GL frames signalled on the GPU (no glFinish)"
++                                      : "display: GL frames completed with glFinish");
++        }
++    }
++    ios_emit_frame(d, gpu_signaled);
 +}
 +
 +static bool ios_is_compatible_dcl(DisplayGLCtx *dgc, DisplayChangeListener *dcl)
@@ -476,6 +582,12 @@ index 0000000..3e0a759
 +        qemu_ios_log("display: initializing EGL (ANGLE on Metal)");
 +        egl_init(NULL, DISPLAY_GL_MODE_ES, &error_fatal);
 +        ios_gl_enabled = 1;
++        {
++            const char *ext = eglQueryString(qemu_egl_display, EGL_EXTENSIONS);
++            sync_gpu = ext && strstr(ext, "EGL_ANGLE_metal_shared_event_sync") != NULL;
++        }
++        qemu_ios_log(sync_gpu ? "display: EGL_ANGLE_metal_shared_event_sync: yes"
++                              : "display: EGL_ANGLE_metal_shared_event_sync: no (glFinish per frame)");
 +        {
 +            char msg[256];
 +            snprintf(msg, sizeof(msg), "display: EGL ready, GL_RENDERER=%s",

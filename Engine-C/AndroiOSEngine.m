@@ -2,6 +2,7 @@
  * AndroiOSEngine — drives QEMU.framework in-process.
  */
 #import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
 #include <TargetConditionals.h>
 #include <pthread.h>
 #include <pthread/qos.h>
@@ -95,12 +96,14 @@ aios_jit_status_t aios_jit_probe(void) {
  *      (256 MB TCG code buffer + ~512 MB QEMU, virgl, ANGLE, UI), and
  *   2. to what the address space can actually reserve.
  */
-static long guest_ram_budget_mb(long requested_mb) {
+/* `reserve_mb`: memory kept for everything but guest RAM (QEMU, the 256 MB TCG
+ * buffer, virgl/ANGLE/Metal, the UI). ~1.5 GB is safe even if the guest touches
+ * all of its RAM. Less lets small devices give Android more; the memory watchdog
+ * (below) then shrinks the guest before iOS runs out. */
+static long guest_ram_budget_mb(long requested_mb, long reserve_mb) {
 #if TARGET_OS_IPHONE
     long ram = requested_mb;
-    /* Measured on device: QEMU + 256 MB TCG buffer + virgl/ANGLE/Metal
-     * allocations + UI reach ~1.5 GB beyond guest RAM. */
-    const uint64_t overhead = (uint64_t)1536 << 20;
+    const uint64_t overhead = (uint64_t)reserve_mb << 20;
     uint64_t avail = os_proc_available_memory();
     if (avail > overhead && ((uint64_t)ram << 20) + overhead > avail) {
         long fit = (long)((avail - overhead) >> 20) & ~255L;
@@ -151,7 +154,8 @@ static NSString *fmt(NSString *f, ...) {
 
 static NSArray<NSString *> *build_argv(NSDictionary *cfg) {
     NSMutableArray *a = [NSMutableArray arrayWithObject:@"qemu-system-aarch64"];
-    long ram  = guest_ram_budget_mb([cfg[@"ram_mb"] longValue] ?: 1024);
+    long reserve = [cfg[@"ram_reserve_mb"] longValue] ?: 1536;
+    long ram  = guest_ram_budget_mb([cfg[@"ram_mb"] longValue] ?: 1024, MAX(768, MIN(1536, reserve)));
     vm.ram_mb = ram;
     long cpus = [cfg[@"cpus"] longValue] ?: 1;
     NSString *gpu = cfg[@"gpu"] ?: @"none";
@@ -195,17 +199,26 @@ static NSArray<NSString *> *build_argv(NSDictionary *cfg) {
         else
             [a addObjectsFromArray:@[@"-device", @"virtio-multitouch-pci", @"-device", @"virtio-keyboard-pci"]];
     }
-    if ([cfg[@"network"] boolValue]) {
-        NSMutableString *net = [@"user,id=net0" mutableCopy];
+    int adb_port = [cfg[@"adb_port"] intValue];
+    if ([cfg[@"network"] boolValue] || adb_port > 0) {
+        // Network off but ADB on: restrict=on keeps the guest offline while the
+        // host can still reach the forwarded port.
+        NSMutableString *net = [([cfg[@"network"] boolValue] ? @"user,id=net0" : @"user,id=net0,restrict=on") mutableCopy];
         for (NSString *fwd in cfg[@"port_forwards"] ?: @[]) [net appendFormat:@",hostfwd=%@", fwd];
+        // ADB for APK installs: loopback only, never reachable from the network.
+        if (adb_port > 0) [net appendFormat:@",hostfwd=tcp:127.0.0.1:%d-:5555", adb_port];
         [a addObjectsFromArray:@[@"-netdev", net, @"-device", @"virtio-net-pci,netdev=net0,romfile="]];
     }
     if ([cfg[@"audio"] boolValue]) {
         // "sound_device": virtio (default) | ac97 | hda — match what the guest kernel drives.
         NSString *snd = cfg[@"sound_device"] ?: @"virtio";
-        [a addObjectsFromArray:@[@"-audiodev", @"ios,id=snd0"]];
+        // The app plays 48 kHz stereo, so have QEMU mix to exactly that (its default is
+        // 44.1 kHz: audio played ~9% fast and kept running dry). A 5 ms timer delivers
+        // smaller, steadier chunks than the 10 ms default.
+        [a addObjectsFromArray:@[@"-audiodev",
+            @"ios,id=snd0,timer-period=5000,out.frequency=48000,out.channels=2,out.fixed-settings=on"]];
         if ([snd isEqualToString:@"ac97"])
-            [a addObjectsFromArray:@[@"-device", @"AC97,audiodev=snd0"]];
+            [a addObjectsFromArray:@[@"-device", @"AC97,audiodev=snd0,fixed-volume=on"]];
         else if ([snd isEqualToString:@"hda"])
             [a addObjectsFromArray:@[@"-device", @"intel-hda", @"-device", @"hda-output,audiodev=snd0"]];
         else
@@ -242,13 +255,32 @@ static NSArray<NSString *> *build_argv(NSDictionary *cfg) {
     if (cfg[@"restore_from"]) [a addObjectsFromArray:@[@"-incoming", fmt(@"file:%@", cfg[@"restore_from"])]];
     // Guest screen density for the AndroiOS images: their GRUB reads the SMBIOS
     // type 1 SKU string and passes it on as androidboot.lcd_density.
-    if ([cfg[@"lcd_density"] intValue] > 0)
-        [a addObjectsFromArray:@[@"-smbios", fmt(@"type=1,sku=%d", [cfg[@"lcd_density"] intValue])]];
+    // Read by the AndroiOS images' GRUB: SKU = screen dpi, family = options.
+    if ([cfg[@"lcd_density"] intValue] > 0 || adb_port > 0) {
+        NSMutableString *smbios = [@"type=1" mutableCopy];
+        if ([cfg[@"lcd_density"] intValue] > 0) [smbios appendFormat:@",sku=%d", [cfg[@"lcd_density"] intValue]];
+        if (adb_port > 0) [smbios appendString:@",family=adb=1"];
+        [a addObjectsFromArray:@[@"-smbios", smbios]];
+    }
     for (id x in cfg[@"extra_args"] ?: @[]) if ([x isKindOfClass:NSString.class]) [a addObject:x];
     return a;
 }
 
 int aios_vm_create(const char *config_json) {
+    // ANGLE backend. With nothing set, WebKit's ANGLE uses its OpenGL backend:
+    // Apple's EAGL OpenGL ES driver on iOS, CGL on macOS. That is what renders
+    // Android correctly today. "angle_backend": "metal" selects ANGLE's Metal
+    // backend (UTM's default, ANGLE_DEFAULT_PLATFORM=metal), which enables
+    // GPU-side frame sync (EGL_ANGLE_metal_shared_event_sync), but Android's
+    // virgl-rendered GL content currently comes out black there (the CPU-
+    // uploaded boot console is fine). Opt-in until that is fixed.
+    {
+        NSData *d = [NSData dataWithBytes:config_json length:strlen(config_json)];
+        NSDictionary *c = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
+        NSString *backend = [c isKindOfClass:NSDictionary.class] ? c[@"angle_backend"] : nil;
+        if ([backend isKindOfClass:NSString.class] && backend.length)
+            setenv("ANGLE_DEFAULT_PLATFORM", backend.UTF8String, 1);
+    }
     if (vm.created) return -1;
     NSData *d = [NSData dataWithBytes:config_json length:strlen(config_json)];
     NSDictionary *cfg = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
@@ -304,11 +336,33 @@ int aios_audio_read(float *left, float *right, int frames) {
 
 int aios_audio_sample_rate(void) { return atomic_load_explicit(&ring_rate, memory_order_relaxed); }
 
+/* ---- frame sync: MTLSharedEvent signalled with each frame's seq ---- */
+static id<MTLSharedEvent> sync_event;
+
+static void sync_cpu_signal(void *ev, uint64_t value) {
+    ((__bridge id<MTLSharedEvent>)ev).signaledValue = value;
+}
+
+void *aios_display_sync_event(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        if (getenv("AIOS_NO_GPU_SYNC")) return;     /* test override: no event at all */
+        id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
+        sync_event = [dev newSharedEvent];
+        if (sync_event) ELOG("frame sync: MTLSharedEvent on %{public}s", dev.name.UTF8String);
+    });
+    return (__bridge void *)sync_event;
+}
+
 static void *qemu_thread(void *unused) {
     int argc = (int)vm.argv.count;
     char **argv = calloc(argc + 1, sizeof(char *));
     for (int i = 0; i < argc; i++) argv[i] = strdup(vm.argv[i].UTF8String);
     qemu_ios_display_set_callback(on_frame, NULL);
+    // NULL with AIOS_NO_GPU_SYNC (test override): QEMU then uses glFinish per
+    // frame and the host never waits on the event.
+    if (aios_display_sync_event())
+        qemu_ios_display_set_sync_event(aios_display_sync_event(), sync_cpu_signal);
     qemu_ios_audio_set_callback(on_audio, NULL);
     vm.state = AIOS_RUNNING;
     ELOG("QEMU thread started (%d args)", argc);
@@ -335,6 +389,39 @@ static void *console_thread(void *unused) {
     return NULL;
 }
 
+/* Memory watchdog: iOS closes the app when it runs out of memory, and memory
+ * warnings can arrive too late. Twice a second, if iOS has less than ~320 MB
+ * left for the app, shrink the guest by 256 MB through virtio-balloon (Android
+ * frees memory: caches first, then lmkd closes background apps). Grow it back
+ * 256 MB at a time once there is plenty again. */
+#define GUEST_MIN_MB 768
+static void *memory_thread(void *unused) {
+#if TARGET_OS_IPHONE
+    double last_shrink = 0;
+    while (!vm.qemu_done) {
+        usleep(500000);
+        if (vm.state != AIOS_RUNNING) continue;
+        long avail = (long)(os_proc_available_memory() >> 20);
+        long current = vm.balloon_mb ? vm.balloon_mb : vm.ram_mb;
+        double now = CFAbsoluteTimeGetCurrent();
+        long target = current;
+        if (avail < 320 && current > GUEST_MIN_MB && now - last_shrink > 1.5) {
+            target = MAX(GUEST_MIN_MB, current - 256);
+            last_shrink = now;
+        } else if (avail > 1024 && vm.balloon_mb && vm.balloon_mb < vm.ram_mb && now - last_shrink > 30) {
+            target = MIN(vm.ram_mb, current + 256);
+            last_shrink = now - 20;     /* next step up in >= 10 s */
+        }
+        if (target != current && qemu_ios_balloon_target_mb(target) == 0) {
+            ELOG("memory watchdog: %ld MB left for the app, guest %ld -> %ld MB",
+                 avail, current, target);
+            vm.balloon_mb = target == vm.ram_mb ? 0 : target;
+        }
+    }
+#endif
+    return NULL;
+}
+
 static int spawn(void *(*fn)(void *), size_t stack, qos_class_t qos) {
     pthread_attr_t attr; pthread_t t;
     pthread_attr_init(&attr);
@@ -354,6 +441,7 @@ int aios_vm_start(int vm_id, const aios_callbacks_t *callbacks) {
     // does: at default QoS iOS demotes it whenever the UI is idle or the device is hot.
     if (spawn(qemu_thread, 8 << 20, QOS_CLASS_USER_INTERACTIVE) != 0) { vm.state = AIOS_ERROR; return -1; }
     spawn(console_thread, 512 << 10, QOS_CLASS_UTILITY);
+    spawn(memory_thread, 256 << 10, QOS_CLASS_UTILITY);
     return 0;
 }
 
@@ -377,13 +465,13 @@ long aios_process_memory_limit_mb(void) {
 #endif
 }
 
-/* Memory warning: shrink the guest 512 MB via virtio-balloon (not below 1 GB).
+/* Memory warning: shrink the guest 512 MB via virtio-balloon (not below 768 MB).
  * The guest hands pages back and QEMU releases them to iOS. */
 long aios_vm_relieve_memory_pressure(int vm_id) {
     if (vm.state != AIOS_RUNNING && vm.state != AIOS_PAUSED) return -1;
     long current = vm.balloon_mb ? vm.balloon_mb : vm.ram_mb;
     long target = current - 512;
-    if (target < 1024) target = 1024;
+    if (target < GUEST_MIN_MB) target = GUEST_MIN_MB;
     if (target >= current) return current;
     int r = qemu_ios_balloon_target_mb(target);
     ELOG("memory warning: balloon %ld -> %ld MB: %{public}s (footprint %llu MB, available %llu MB)",
