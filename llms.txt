@@ -27,7 +27,7 @@
 
 ## Status and known issues
 - Runs well on real devices as of v0.3.1-alpha (tested on an iPhone 16 Pro, A18 Pro, iOS 26+): JIT works through StikDebug's universal.js script, and Android boots and is usable.
-- v0.3.0/v0.3.1-alpha: Android 15 option (low-memory mode: no setup wizard, no "isn't responding" dialogs, no boot animation) and phone/tablet layouts.
+- v0.3.0/v0.3.1-alpha: Android 15 option (low-memory mode: no "isn't responding" dialogs, no boot animation) and phone/tablet layouts.
 - Verified in the Mac harness running the same engine code: boot, GPU rendering with readable text, touch, audio.
 - v0.2.1-alpha addressed freezes (VM paused on iOS memory warnings) and crashes (iOS memory limit) on phones without the increased-memory-limit entitlement: memory warnings now shrink the guest through virtio-balloon, and guest RAM defaults to what iOS allows the app.
 - Earlier fixes: v0.2.0-alpha fixed a crash at launch with JIT on iOS 26+ (AndroiOS uses the universal.js protocol: brk #0xf00d, x16=1 to prepare a region, x16=0 to detach) and SideStore's "The file can't be opened" (the 10 MB IPA downloads LineageOS in its setup wizard).
