@@ -19,9 +19,13 @@ OpenGL ES rendering runs on the **Apple GPU**:
 
 ```
 Android (HWUI/SurfaceFlinger, GLES) ─► Mesa virgl ─► virtio-gpu ─► QEMU
-   ─► virglrenderer ─► libepoxy ─► ANGLE (GLES on Metal) ─► Apple GPU
-   ─► IOSurface ─► MTKView
+   ─► virglrenderer ─► libepoxy ─► ANGLE ─► Apple GPU
+   ─► IOSurface (3 rotating buffers) ─► CAMetalLayer (own render thread, up to 120 Hz)
 ```
+
+ANGLE currently runs on Apple's OpenGL ES driver (its default on iOS). Its Metal backend, which
+UTM uses (`ANGLE_DEFAULT_PLATFORM=metal`), is opt-in for now: Android's GL content renders black
+there, so that's being worked on before it becomes the default.
 
 The GPU components are the ones **UTM** ships on iOS: `utmapp/virglrenderer`,
 `utmapp/libepoxy`, and ANGLE from `utmapp/WebKit` (Safari's ANGLE), all at UTM's pinned
@@ -36,7 +40,8 @@ UTM/QEMU: UEFI → GRUB → Android, Mesa virgl, drm_hwcomposer.
 ## Verified (macOS harness running the iOS engine code)
 - LineageOS 23.2 boots to setup in about 3–5 minutes, rendered on the Apple GPU with readable text
 - Touch via USB tablet: taps dismiss dialogs and advance the setup wizard
-- Audio: AC97 → QEMU `ios` audiodev → app callback
+- Audio: AC97 (`fixed-volume=on`) → QEMU `ios` audiodev at 48 kHz → app; real (non-silent) samples
+- App installs: an APK streamed over ADB installs with `Success`
 - Boot animation at 40–50 FPS; GPU benchmark (glmark2) 103–130 FPS
 
 ## Android versions
@@ -108,7 +113,7 @@ The legacy `brk #0x69` handshake is not used; current `universal.js` rejects it.
 TXM, and iOS versions before 26, only need the debugger-attached flag (`CS_DEBUGGED`). Progress is
 logged to Console.app under the subsystems `com.androios.engine` and `com.androios.qemu`.
 
-Runs well on real devices as of v0.3.1-alpha (tested on an iPhone 16 Pro, iOS 26+): JIT works through StikDebug's universal.js script, and Android boots and is usable.
+Runs well on real devices as of v0.3.1-alpha (tested on an iPhone 16 Pro, iOS 26+; v0.4.0-alpha not yet tested on a device): JIT works through StikDebug's universal.js script, and Android boots and is usable.
 
 ## Quick start
 ```sh
@@ -121,7 +126,9 @@ On the device:
 2. Apply the memory entitlements with GetMoreRAM, TrollStore, or a paid developer profile.
    Without them, AndroiOS lowers guest RAM to what iOS allows the app instead of being killed.
 3. Enable JIT with StikDebug using the **universal.js** script.
-4. In the setup wizard, pick an Android version (LineageOS 22.2 / Android 15 is recommended, ~1 GB), download it, then boot.
+4. In the setup wizard, pick an Android version (LineageOS 22.2 / Android 15 is recommended, ~1 GB) and a phone
+   or tablet layout, download it, then boot.
+5. To add apps, open the VM menu: **Install app from Files (APK)** or **Install F-Droid**.
 
 `Scripts/build-ipa.sh --with-guest` can still bundle the disks into a ~1 GB IPA for Xcode or
 TrollStore installs; SideStore cannot sign IPAs that large.
@@ -129,8 +136,8 @@ TrollStore installs; SideStore cannot sign IPAs that large.
 ## Layout
 | Path | What |
 |---|---|
-| `App/` | SwiftUI app: VM manager, setup wizard, Metal display, touch/keyboard, audio, settings |
-| `Engine-C/AndroiOSEngine.{h,m}` | C API: lifecycle, UEFI/disks, display/input/audio callbacks, snapshots, perf |
+| `App/` | SwiftUI app: VM manager, setup wizard, Metal display, touch/keyboard, audio, settings, app installer (minimal ADB client) |
+| `Engine-C/AndroiOSEngine.{h,m}` | C API: lifecycle, UEFI/disks, display/input/audio callbacks, frame sync, memory watchdog, snapshots, perf |
 | `Engine-C/build-angle.sh` | WebKit ANGLE (UTM's pin) → `EGL.framework`, `GLESv2.framework` |
 | `Engine-C/build-ios.sh` | glib, pixman, libslirp, UTM libepoxy + virglrenderer, QEMU → `QEMU.framework` |
 | `Engine-C/ios-patches/` | QEMU 9.2.4 patches: in-process dylib, iOS JIT, IOSurface display, audio, input |
