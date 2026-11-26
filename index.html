@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AndroiOS – Run Android on iPhone and iPad</title>
-<meta name="description" content="AndroiOS runs Android (LineageOS 22.2 / Android 15 or 23.2 / Android 16) on iPhone and iPad as an AArch64 virtual machine, using QEMU's JIT and Metal GPU acceleration. Open source, sideloaded, early alpha.">
+<meta name="description" content="AndroiOS runs Android (LineageOS 22.2 / Android 15 or 23.2 / Android 16) on iPhone and iPad as an AArch64 virtual machine, using QEMU's JIT and Apple GPU acceleration. Open source, sideloaded, early alpha.">
 <link rel="canonical" href="https://alolaxd.github.io/AndroiOS/">
 <meta name="theme-color" content="#0d0d0f">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
@@ -12,7 +12,7 @@
 
 <meta property="og:type" content="website">
 <meta property="og:title" content="AndroiOS – Run Android on iPhone and iPad">
-<meta property="og:description" content="An open-source iOS app that boots LineageOS 22.2 (Android 15) or 23.2 (Android 16) in a QEMU virtual machine, with Android's graphics rendered on the Apple GPU through Metal.">
+<meta property="og:description" content="An open-source iOS app that boots LineageOS 22.2 (Android 15) or 23.2 (Android 16) in a QEMU virtual machine, with Android's graphics rendered on the Apple GPU.">
 <meta property="og:url" content="https://alolaxd.github.io/AndroiOS/">
 <meta property="og:site_name" content="AndroiOS">
 <meta property="og:image" content="https://alolaxd.github.io/AndroiOS/images/screenshot.jpg">
@@ -22,17 +22,17 @@
 <meta name="twitter:card" content="summary">
 <meta name="twitter:image" content="https://alolaxd.github.io/AndroiOS/images/screenshot.jpg">
 <meta name="twitter:title" content="AndroiOS – Run Android on iPhone and iPad">
-<meta name="twitter:description" content="Android 15 or 16 (LineageOS) in a QEMU VM on iPhone and iPad, with Metal GPU acceleration. Open source, early alpha.">
+<meta name="twitter:description" content="Android 15 or 16 (LineageOS) in a QEMU VM on iPhone and iPad, with Apple GPU acceleration. Open source, early alpha.">
 
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "AndroiOS",
-  "description": "A sideloaded iOS and iPadOS app that runs Android (LineageOS 22.2 / Android 15 or 23.2 / Android 16) as an AArch64 virtual machine using QEMU's JIT, with Android's OpenGL ES rendering translated to Metal on the Apple GPU.",
+  "description": "A sideloaded iOS and iPadOS app that runs Android (LineageOS 22.2 / Android 15 or 23.2 / Android 16) as an AArch64 virtual machine using QEMU's JIT, with Android's OpenGL ES rendering accelerated on the Apple GPU.",
   "applicationCategory": "UtilitiesApplication",
   "operatingSystem": "iOS, iPadOS",
-  "softwareVersion": "0.3.1-alpha",
+  "softwareVersion": "0.4.0-alpha",
   "image": "https://alolaxd.github.io/AndroiOS/images/icon-512.png",
   "url": "https://alolaxd.github.io/AndroiOS/",
   "screenshot": "https://alolaxd.github.io/AndroiOS/images/screenshot.jpg",
@@ -54,7 +54,7 @@
       "name": "Can you run Android on an iPhone?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Not natively, and not through the App Store. iOS gives apps no hypervisor, so Android has to be emulated: every Android instruction is translated by QEMU's just-in-time compiler. AndroiOS does this as a sideloaded app. It needs JIT (enabled with StikDebug's universal.js script) and extra memory entitlements. The project is an early alpha that has been tested on a real iPhone (iPhone 16 Pro): JIT works and LineageOS 23.2 (Android 16) boots on the device."
+        "text": "Not natively, and not through the App Store. iOS gives apps no hypervisor, so Android has to be emulated: every Android instruction is translated by QEMU's just-in-time compiler. AndroiOS does this as a sideloaded app. It needs JIT (enabled with StikDebug's universal.js script) and extra memory entitlements. The project is an early alpha that has been tested on a real iPhone (iPhone 16 Pro): JIT works, and Android boots and is usable."
       }
     },
     {
@@ -62,7 +62,7 @@
       "name": "How does AndroiOS work?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "AndroiOS runs QEMU inside the app as a framework and boots the prebuilt LineageOS virtio_arm64only VM (UEFI, GRUB, Android). The CPU is emulated by QEMU's JIT. Graphics are accelerated: Android's OpenGL ES goes through Mesa virgl and virtio-gpu to virglrenderer, libepoxy and ANGLE, which translates it to Metal on the Apple GPU. Frames are shared with the SwiftUI app through an IOSurface. The GPU components are the ones UTM ships on iOS."
+        "text": "AndroiOS runs QEMU inside the app as a framework and boots the prebuilt LineageOS virtio_arm64only VM (UEFI, GRUB, Android). The CPU is emulated by QEMU's JIT. Graphics are accelerated: Android's OpenGL ES goes through Mesa virgl and virtio-gpu to virglrenderer, libepoxy and ANGLE, which runs it on the Apple GPU (currently through Apple's OpenGL ES driver; ANGLE's Metal backend is in progress). Frames are shared with the SwiftUI app through an IOSurface. The GPU components are the ones UTM ships on iOS."
       }
     },
     {
@@ -71,6 +71,14 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "GPU work is fast and CPU work is slow. In the macOS test harness on an Apple A18 Pro GPU, the LineageOS boot animation ran at 40–50 FPS and the glmark2 benchmark scored 103 (67–131 FPS per scene). Booting to the setup wizard took about 3–5 minutes. Android's UI is CPU-bound and does not reach 60 FPS under emulation. Phones and older chips will be slower."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can you run Android apps and games on AndroiOS?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes, with limits. The VM menu can install an APK from the Files app, or install F-Droid with one tap; from F-Droid, Aurora Store gives access to Google Play's catalog. Only 64-bit ARM apps run, and apps that require Google Play Services may not work. Every app's code runs on the emulated CPU, so light and 2D games run best; demanding 3D games are slow. Game controllers are not supported yet."
       }
     },
     {
@@ -195,10 +203,10 @@
 <div class="wrap">
   <div class="hero">
     <div>
-      <span class="badge">v0.3.1-alpha · open source</span>
+      <span class="badge">v0.4.0-alpha · open source</span>
       <img class="app-icon" src="images/icon-512.png" width="88" height="88" alt="AndroiOS app icon">
       <h1>AndroiOS</h1>
-      <p class="lede">Run Android 15 or 16 (LineageOS) on iPhone and iPad: an AArch64 virtual machine via QEMU, with Android's graphics on the Apple GPU through Metal.</p>
+      <p class="lede">Run Android 15 or 16 (LineageOS) on iPhone and iPad: an AArch64 virtual machine via QEMU, with Android's graphics on the Apple GPU.</p>
       <div class="buttons">
         <a class="btn primary" href="https://github.com/alolaxd/AndroiOS">View on GitHub</a>
         <a class="btn" href="https://github.com/alolaxd/AndroiOS/releases">Download IPA</a>
@@ -218,7 +226,7 @@
       <li><strong>JIT</strong>, enabled by attaching a debugger with StikDebug. On iOS 26 and later, use StikDebug's <code>universal.js</code> script: on A15 and newer chips, the debugger must prepare executable memory before it can run;</li>
       <li><strong>more memory</strong>, through the <code>increased-memory-limit</code> and <code>extended-virtual-addressing</code> entitlements (GetMoreRAM, TrollStore or a paid developer profile).</li>
     </ul>
-    <div class="note"><strong>Status:</strong> early alpha that runs well on real devices. Tested on an iPhone 16 Pro (iOS 26+): JIT works through StikDebug, and Android boots and is usable. Version 0.3 adds Android 15 as a lighter, recommended option (Android's low-memory mode, no "isn't responding" pop-ups) and a tablet layout for iPad. Boot, GPU rendering, touch and audio are also verified in a Mac test harness that runs the same engine code.</div>
+    <div class="note"><strong>Status:</strong> early alpha that runs well on real devices. Tested on an iPhone 16 Pro (iOS 26+): JIT works through StikDebug, and Android boots and is usable. Version 0.4 fixes sound, adds installing apps (APKs from Files, or F-Droid), lets 4 GB devices such as the iPad 10 give Android more RAM, and moves the display to its own thread with faster frame handoff. Version 0.3 added Android 15 as a lighter, recommended option (Android's low-memory mode, no "isn't responding" pop-ups) and a tablet layout for iPad. Boot, GPU rendering, touch and audio are also verified in a Mac test harness that runs the same engine code.</div>
   </section>
 
   <section id="how-it-works">
@@ -226,15 +234,16 @@
     <p>AndroiOS is a SwiftUI app that embeds QEMU as a framework and runs the virtual machine on background threads inside the app. The guest is the prebuilt <a href="https://github.com/jqssun/android-lineage-qemu">LineageOS <code>virtio_arm64only</code></a> VM, which boots through UEFI and GRUB.</p>
     <ul>
       <li><strong>CPU:</strong> QEMU's TCG JIT translates ARM64 guest code into ARM64 host code. Its code buffer is mapped read+execute, prepared by the debugger on iOS 26+ devices with TXM (<code>brk #0xf00d</code>, the universal.js protocol), and written through a separate read-write alias, so it never violates iOS's W^X rules.</li>
-      <li><strong>GPU:</strong> Android's OpenGL ES calls are translated to Metal and run on the Apple GPU:</li>
+      <li><strong>GPU:</strong> Android's OpenGL ES calls run on the Apple GPU through ANGLE. ANGLE currently uses Apple's OpenGL ES driver; its Metal backend, which UTM uses, is being brought up for Android:</li>
     </ul>
 <pre>Android (GLES) → Mesa virgl → virtio-gpu → QEMU
-  → virglrenderer → libepoxy → ANGLE (GLES on Metal) → Apple GPU
+  → virglrenderer → libepoxy → ANGLE → Apple GPU
   → IOSurface → MTKView</pre>
     <p>The GPU components are the ones <a href="https://github.com/utmapp/UTM">UTM</a> ships on iOS: UTM's virglrenderer and libepoxy, and WebKit's ANGLE, all at UTM's pinned versions.</p>
     <ul>
       <li><strong>Input:</strong> touches go to a USB tablet device that Android converts to touch; a virtual keyboard is also supported.</li>
-      <li><strong>Audio:</strong> the guest's sound card feeds PCM to AVAudioEngine.</li>
+      <li><strong>Audio:</strong> the guest's AC97 sound card feeds 48 kHz PCM to AVAudioEngine.</li>
+      <li><strong>Apps:</strong> the app installs APKs through Android's ADB service, forwarded only to 127.0.0.1 on the device.</li>
       <li><strong>Network:</strong> user-mode NAT (libslirp), with no special permissions.</li>
     </ul>
   </section>
@@ -252,6 +261,17 @@
     <p>Expect slower results on phones (thermal throttling) and on older chips. On 4 GB devices such as the iPad 10, choose Android 15: it runs in Android's low-memory mode, which suits them much better than Android 16.</p>
   </section>
 
+  <section id="apps-and-games">
+    <h2>Can you run Android apps and games on AndroiOS?</h2>
+    <p>Yes, with limits. LineageOS has no app store built in, so AndroiOS installs apps for you: open the VM menu and choose <strong>Install app from Files (APK)</strong>, or <strong>Install F-Droid</strong> for an open-source app store. From F-Droid, <a href="https://f-droid.org/packages/com.aurora.store/">Aurora Store</a> gives access to Google Play's catalog.</p>
+    <ul>
+      <li>Only 64-bit ARM apps run (this Android has no 32-bit or x86 support).</li>
+      <li>Apps that require Google Play Services may refuse to start.</li>
+      <li>All app code runs on the emulated CPU: light and 2D games run best, demanding 3D games are slow.</li>
+      <li>Game controllers are not supported yet.</li>
+    </ul>
+  </section>
+
   <section id="install">
     <h2>How to install AndroiOS</h2>
     <ol>
@@ -260,6 +280,7 @@
       <li>Apply the memory entitlements with GetMoreRAM, TrollStore, or a paid developer profile. Without them, AndroiOS gives Android less RAM.</li>
       <li>Open StikDebug and enable JIT for AndroiOS with the <code>universal.js</code> script.</li>
       <li>In AndroiOS's setup wizard, pick an Android version and download it: Android 15 (LineageOS 22.2, about 1 GB, recommended) or Android 16 (LineageOS 23.2, about 1.2 GB). Choose a phone or tablet layout (iPads default to tablet), then boot the VM. The first boot takes a few minutes.</li>
+      <li>To add apps, open the VM menu and choose <strong>Install app from Files (APK)</strong> or <strong>Install F-Droid</strong>.</li>
     </ol>
     <p class="muted">To build from source: clone the repository, then run <code>Scripts/build-all.sh</code> on a Mac with Xcode. See <a href="https://github.com/alolaxd/AndroiOS/blob/main/docs/BUILDING.md">docs/BUILDING.md</a>.</p>
   </section>
